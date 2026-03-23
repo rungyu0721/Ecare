@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>E-CARE 對話</title>
+  <link rel="stylesheet" href="ecare.css">
+</head>
+
+<body>
+
+  <!-- ✅ High 風險彈窗（Demo：AI 報案中心） -->
+  <div class="modal" id="escalateModal" aria-hidden="true">
+    <div class="modal-card">
+      <h3>⚠️ 高風險事件</h3>
+      <p id="escalateText">系統判定可能有立即危害，建議立刻通報。</p>
+
+      <div class="modal-actions">
+        <button id="goReportCenterBtn" class="primary" type="button">連線 AI 報案中心（Demo）</button>
+        <button id="cancelEscalateBtn" class="ghost" type="button">我已安全 / 先不通報</button>
+      </div>
+
+      <div class="modal-note">
+        <small>※不會真的撥打 110/119，會建立一筆「虛擬通報紀錄」。</small>
+      </div>
+    </div>
+  </div>
+
+<header class="topbar">
+  <button type="button" class="back" onclick="window.location.href='user.html'">←</button>
+  <h2>E-CARE 同理心引導</h2>
+</header>
+
+  <!-- 風險顯示卡 -->
+  <section class="riskbar" id="riskBar" hidden>
+    <div class="risk-left">
+      <div class="risk-level" id="riskLevel">Medium</div>
+      <div class="risk-score mono" id="riskScore">0.55</div>
+    </div>
+    <div class="risk-right" id="riskHint">請保持冷靜，我會引導你。</div>
+  </section>
+
+  <main class="chat-container" id="chatContainer">
+    <div class="bot message">
+      您好，我是 E-CARE 🤖  
+      請問現在發生什麼事？我會一步步幫助您。
+    </div>
+  </main>
+
+  <div class="input-area">
+    <button id="recBtn" class="rec" type="button" aria-label="錄音">🎙️</button>
+    <input type="text" id="userInput" placeholder="請描述發生什麼事..." autocomplete="off" />
+    <button id="sendBtn" type="button">送出</button>
+  </div>
+
+  <div id="recHint" style="text-align:center; font-size:12px; opacity:.7; padding:6px 0;"></div>
+
+  <script src="ecare.js"></script>
+</body>
+</html>

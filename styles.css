@@ -1,0 +1,410 @@
+:root{
+  --bg:#F6E2BF;
+  --bg2:#F4D7A7;
+  --text:#3A2A1D;
+  --muted:#6C584C;
+  --card:#F7E9D0;
+  --white:#FFF7EA;
+
+  --emg:#C95A4A;
+  --emg2:#B84B3D;
+
+  --shadow: 0 10px 26px rgba(0,0,0,.12);
+  --radius: 18px;
+}
+
+*{ box-sizing:border-box; }
+
+html, body{
+  margin:0;
+  padding:0;
+  min-height:100%;
+}
+
+body{
+  font-family: system-ui, -apple-system, "Noto Sans TC", "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: radial-gradient(120% 80% at 50% 25%, var(--bg2) 0%, var(--bg) 60%, #F3E8D4 100%);
+  -webkit-text-size-adjust: 100%;
+}
+
+button, input, textarea{
+  font: inherit;
+}
+
+.app{
+  max-width: 520px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  padding: 18px 16px calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+}
+
+.top{
+  text-align:center;
+  padding: 12px 6px 8px;
+}
+
+.brand{
+  margin:0;
+  font-size: 34px;
+  letter-spacing: 3px;
+}
+
+.subtitle{
+  margin: 10px 0 0;
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: var(--text);
+  opacity: .95;
+}
+
+.emergency-card{
+  margin-top: 16px;
+}
+
+.emergency-btn{
+  width: 100%;
+  min-height: 112px;
+  border: 0;
+  background: linear-gradient(180deg, var(--emg) 0%, var(--emg2) 100%);
+  color: #fff;
+  border-radius: 22px;
+  padding: 18px 18px 16px;
+  box-shadow: var(--shadow);
+  position: relative;
+  overflow:hidden;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  gap:14px;
+  touch-action: manipulation;
+}
+
+.emergency-btn:active{
+  transform: scale(.995);
+}
+
+.emg-left{
+  font-size: 34px;
+  width: 54px;
+  height: 54px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: rgba(255,255,255,.12);
+  border-radius: 16px;
+  flex: 0 0 auto;
+}
+
+.emg-text{
+  flex:1;
+  text-align:left;
+  min-width: 0;
+}
+
+.emg-title{
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  line-height: 1.2;
+}
+
+.emg-sub{
+  font-size: 18px;
+  opacity:.95;
+  margin-top: 4px;
+}
+
+.emg-progress{
+  position:absolute;
+  left:0;
+  bottom:0;
+  width:100%;
+  height: 8px;
+  background: rgba(255,255,255,.18);
+}
+
+.emg-bar{
+  height:100%;
+  width:0%;
+  background: rgba(255,255,255,.85);
+  transition: width 0.06s linear;
+}
+
+.emg-hint{
+  position:absolute;
+  right: 14px;
+  top: 12px;
+  font-size: 12px;
+  opacity: .9;
+  background: rgba(0,0,0,.18);
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+
+.menu{
+  margin-top: 18px;
+  display:flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.big-tile{
+  width:100%;
+  border:0;
+  border-radius: 22px;
+  background: #F7D28E;
+  box-shadow: var(--shadow);
+  padding: 18px 16px;
+  display:flex;
+  align-items:center;
+  gap: 14px;
+  cursor:pointer;
+  min-height: 90px;
+  touch-action: manipulation;
+}
+
+.tile-ico{
+  font-size: 32px;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: rgba(0,0,0,.06);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex: 0 0 auto;
+}
+
+.tile-text{
+  font-size: 34px;
+  letter-spacing: 3px;
+  font-weight: 800;
+}
+
+.list-item{
+  width:100%;
+  min-height: 64px;
+  border:0;
+  border-radius: 16px;
+  background: rgba(255,255,255,.55);
+  box-shadow: 0 8px 18px rgba(0,0,0,.08);
+  padding: 14px 14px;
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  cursor:pointer;
+  touch-action: manipulation;
+}
+
+.li-ico{
+  font-size: 24px;
+  width: 40px;
+  text-align:center;
+}
+
+.li-text{
+  font-size: 20px;
+  font-weight: 650;
+  flex:1;
+  text-align:left;
+}
+
+.li-arrow{
+  font-size: 20px;
+  opacity:.9;
+}
+
+.status-card{
+  margin-top: 16px;
+  background: rgba(255,255,255,.35);
+  border: 1px solid rgba(58,42,29,.12);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.kv{
+  display:grid;
+  grid-template-columns: 56px 1fr;
+  gap: 8px 10px;
+  align-items:center;
+}
+
+.k{
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.v{
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.result{
+  margin-top: 10px;
+  background: rgba(255,255,255,.65);
+  border: 1px solid rgba(58,42,29,.12);
+  border-radius: 14px;
+  padding: 12px 14px;
+  min-height: 88px;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  font-size: 13px;
+  color: var(--muted);
+  box-shadow: 0 4px 12px rgba(0,0,0,.05);
+  transition: all .2s ease;
+}
+
+.mono{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  word-break: break-all;
+}
+
+.footer{
+  margin-top: auto;
+  padding-top: 16px;
+  text-align:center;
+}
+
+.muted{
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 平板與一般手機 */
+@media (max-width: 768px){
+  .app{
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .brand{
+    font-size: 32px;
+  }
+
+  .subtitle{
+    font-size: 17px;
+    letter-spacing: 1px;
+  }
+
+  .tile-text{
+    font-size: 30px;
+  }
+
+  .li-text{
+    font-size: 18px;
+  }
+}
+
+/* 小手機 */
+@media (max-width: 420px){
+  .app{
+    padding: 14px 12px calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .top{
+    padding-top: 6px;
+  }
+
+  .brand{
+    font-size: 28px;
+    letter-spacing: 2px;
+  }
+
+  .subtitle{
+    margin-top: 8px;
+    font-size: 15px;
+    letter-spacing: .5px;
+  }
+
+  .emergency-btn{
+    min-height: 122px;
+    align-items: flex-start;
+    padding: 18px 14px 16px;
+  }
+
+  .emg-left{
+    width: 48px;
+    height: 48px;
+    font-size: 28px;
+  }
+
+  .emg-title{
+    font-size: 24px;
+    letter-spacing: 1px;
+  }
+
+  .emg-sub{
+    font-size: 15px;
+  }
+
+  .emg-hint{
+    top: auto;
+    right: 12px;
+    bottom: 16px;
+    font-size: 11px;
+    padding: 5px 8px;
+  }
+
+  .big-tile{
+    min-height: 84px;
+    padding: 16px 14px;
+  }
+
+  .tile-ico{
+    width: 50px;
+    height: 50px;
+    font-size: 28px;
+  }
+
+  .tile-text{
+    font-size: 26px;
+    letter-spacing: 2px;
+  }
+
+  .list-item{
+    min-height: 60px;
+    padding: 12px;
+  }
+
+  .li-ico{
+    width: 34px;
+    font-size: 22px;
+  }
+
+  .li-text{
+    font-size: 17px;
+  }
+
+  .li-arrow{
+    font-size: 18px;
+  }
+
+  .status-card{
+    padding: 12px;
+  }
+
+  .kv{
+    grid-template-columns: 48px 1fr;
+  }
+
+  .k{
+    font-size: 12px;
+  }
+
+  .v{
+    font-size: 13px;
+  }
+
+  .result{
+    min-height: 96px;
+    font-size: 12px;
+  }
+
+  .muted{
+    font-size: 11px;
+  }
+}
