@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+﻿from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Literal, Optional, Dict, Any
@@ -18,9 +18,22 @@ from google import genai
 
 app = FastAPI()
 
+ALLOWED_ORIGINS = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://127.0.0.1",
+    "http://127.0.0.1:3000",
+    "http://10.0.2.2",
+    "http://10.0.2.2:8000",
+    "http://192.168.50.254",
+    "http://192.168.50.254:5500",
+    "capacitor://localhost",
+    "ionic://localhost",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -119,7 +132,7 @@ def make_id(prefix="A"):
 
 WHISPER_MODEL = None
 GEMINI_CLIENT = None
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 EMOTION_MODEL = None
 
 @app.on_event("startup")
@@ -142,6 +155,34 @@ def load_models():
     except Exception as e:
         EMOTION_MODEL = None
         print(f"⚠️ Emotion model 載入失敗：{e}")
+
+
+def call_gemini(contents: str):
+    if GEMINI_CLIENT is None:
+        raise RuntimeError("Gemini client not ready")
+
+    fallback_models = []
+    for model_name in [
+        GEMINI_MODEL_NAME,
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+    ]:
+        if model_name and model_name not in fallback_models:
+            fallback_models.append(model_name)
+
+    last_error = None
+    for model_name in fallback_models:
+        try:
+            return GEMINI_CLIENT.models.generate_content(
+                model=model_name,
+                contents=contents
+            )
+        except Exception as exc:
+            last_error = exc
+            print(f"Gemini model failed: {model_name} -> {exc}")
+
+    raise last_error if last_error else RuntimeError("Gemini generate_content failed")
 
 def extract_emotion_features(wav_path: str) -> np.ndarray:
     y, sr = librosa.load(wav_path, sr=16000, mono=True)
@@ -462,10 +503,7 @@ JSON 格式如下：
 {context}
 """
 
-    resp = GEMINI_CLIENT.models.generate_content(
-        model=GEMINI_MODEL_NAME,
-        contents=prompt
-    )
+    resp = call_gemini(prompt)
 
     text = (resp.text or "").strip()
 
@@ -553,10 +591,7 @@ risk_level 只能是：
 {context}
 """
 
-    resp = GEMINI_CLIENT.models.generate_content(
-        model=GEMINI_MODEL_NAME,
-        contents=prompt
-    )
+    resp = call_gemini(prompt)
 
     text = (resp.text or "").strip()
 
@@ -637,10 +672,7 @@ def semantic_understanding_from_text(
 {json.dumps(safe_extracted, ensure_ascii=False)}
 """
 
-    resp = GEMINI_CLIENT.models.generate_content(
-        model=GEMINI_MODEL_NAME,
-        contents=prompt
-    )
+    resp = call_gemini(prompt)
 
     result_text = (resp.text or "").strip()
     if result_text.startswith("```"):
@@ -928,3 +960,9 @@ def create_report(payload: ReportCreate):
     )
     REPORTS.append(item)
     return item
+
+
+
+
+
+

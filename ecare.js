@@ -1,131 +1,153 @@
-const API_BASE = "http://192.168.50.254:8000"; // ← 改成你的 FastAPI 電腦 IP
+﻿const API_BASE = "http://10.0.2.2:8000";
+const SHOW_VOICE_DEBUG = false;
 
 const sendBtn = document.getElementById("sendBtn");
 const userInput = document.getElementById("userInput");
 const chatContainer = document.getElementById("chatContainer");
+const recBtn = document.getElementById("recBtn");
+const recHint = document.getElementById("recHint");
 
-// 風險卡
 const riskBar = document.getElementById("riskBar");
 const riskLevelEl = document.getElementById("riskLevel");
 const riskScoreEl = document.getElementById("riskScore");
 const riskHintEl = document.getElementById("riskHint");
 
-// ✅ High 彩窗
 const escalateModal = document.getElementById("escalateModal");
 const escalateText = document.getElementById("escalateText");
 const goReportCenterBtn = document.getElementById("goReportCenterBtn");
 const cancelEscalateBtn = document.getElementById("cancelEscalateBtn");
 
-// 🎙️錄音
-const recBtn = document.getElementById("recBtn");
+const ASSISTANT_GREETING = "您好，我是 E-CARE，請問現在發生什麼事？我會一步步幫助您。";
+
+let messages = [
+  { role: "assistant", content: ASSISTANT_GREETING }
+];
+let lastAnalysis = null;
+let currentLocation = null;
 let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
-const SHOW_VOICE_DEBUG = false;
+let recordStartTime = 0;
 
-let messages = [
-  { role: "assistant", content: "您好，我是 E-CARE 🤖 請問現在發生什麼事？我會一步步幫助您。" }
-];
-
-// ✅ 暫存最後一次分析結果（用來建立通報）
-let lastAnalysis = null;
-
-// ✅ 定位暫存（lat/lng/accuracy）
-let currentLocation = null;
-
-sendBtn.addEventListener("click", sendMessage);
-userInput.addEventListener("keypress", (e) => {
-  if (e.key === "Enter") sendMessage();
-});
+function scrollToBottom() {
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
 
 function addMessage(text, type) {
   const div = document.createElement("div");
   div.classList.add("message", type === "user" ? "user" : "bot");
   div.textContent = text;
   chatContainer.appendChild(div);
-  chatContainer.scrollTop = chatContainer.scrollHeight;
+  scrollToBottom();
+}
+
+function addTypingBubble() {
+  const div = document.createElement("div");
+  div.classList.add("message", "bot");
+  div.textContent = "E-CARE 正在整理回應...";
+  chatContainer.appendChild(div);
+  scrollToBottom();
+  return div;
 }
 
 function setRiskUI(data) {
-  if (!riskBar) return;
+  if (!riskBar || !data) return;
+
+  const riskLevel = data.risk_level || "Low";
+  const riskScore = Number(data.risk_score ?? 0).toFixed(2);
 
   riskBar.hidden = false;
-  riskLevelEl.textContent = data.risk_level;
-  riskScoreEl.textContent = Number(data.risk_score).toFixed(2);
-
+  riskLevelEl.textContent = riskLevel;
+  riskScoreEl.textContent = riskScore;
   riskBar.classList.remove("risk-low", "risk-medium", "risk-high");
 
-  if (data.risk_level === "High") {
+  if (riskLevel === "High") {
     riskBar.classList.add("risk-high");
-    riskHintEl.textContent = "高風險：建議立即通報並遠離危險。";
-  } else if (data.risk_level === "Medium") {
+    riskHintEl.textContent = "高風險，請先確認自身安全並準備通報。";
+  } else if (riskLevel === "Medium") {
     riskBar.classList.add("risk-medium");
-    riskHintEl.textContent = "中風險：請補充地點與現場狀況。";
+    riskHintEl.textContent = "請保持冷靜，我會協助你整理重點。";
   } else {
     riskBar.classList.add("risk-low");
-    riskHintEl.textContent = "低風險：請描述更多細節，我會協助整理。";
+    riskHintEl.textContent = "低風險，請補充更多細節，我會協助整理。";
   }
 }
 
-// ✅ 把 AI 分析結果整理成較完整的文字
+async function clearServiceWorkersAndCaches() {
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+      console.log("[E-CARE] cleared service workers:", registrations.length);
+    }
+
+    if ("caches" in window) {
+      const cacheKeys = await caches.keys();
+      await Promise.all(cacheKeys.map((key) => caches.delete(key)));
+      console.log("[E-CARE] cleared caches:", cacheKeys);
+    }
+  } catch (error) {
+    console.warn("[E-CARE] cleanup warning", error);
+  }
+}
+
+async function runConnectivityProbe() {
+  console.log("[E-CARE] API_BASE", API_BASE, "href", window.location.href);
+  await clearServiceWorkersAndCaches();
+
+  try {
+    const response = await fetch(`${API_BASE}/reports`, {
+      method: "GET",
+      cache: "no-store"
+    });
+
+    console.log("[E-CARE] probe status", response.status, response.url);
+
+    if (SHOW_VOICE_DEBUG) {
+      addMessage(`API 連線成功：${API_BASE}`, "bot");
+    }
+  } catch (error) {
+    console.error("[E-CARE] probe failed", error);
+    if (SHOW_VOICE_DEBUG) {
+      addMessage(`API 連線失敗：${API_BASE}\n${error.message || error}`, "bot");
+    }
+  }
+}
+
 function buildIncidentDescription(analysis) {
-  const ex = analysis?.extracted || {};
-
-  const category = ex.category || "待確認";
-
-  const location =
-    ex.location ||
-    (currentLocation
-      ? `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}（±${Math.round(currentLocation.accuracy)}m）`
-      : "未提供");
-
-  const injured =
-    ex.people_injured === true
-      ? "有人受傷或需要醫療協助"
-      : ex.people_injured === false
-      ? "目前回報無人受傷"
-      : "未知";
-
-  const weapon =
-    ex.weapon === true
-      ? "現場可能有武器"
-      : ex.weapon === false
-      ? "目前未發現武器"
-      : "武器狀況未知";
-
-  const danger =
-    ex.danger_active === true
-      ? "危險仍在持續"
-      : ex.danger_active === false
-      ? "危險似乎已暫時解除"
-      : "危險狀況未知";
-
-  const dispatch = ex.dispatch_advice || "建議派遣：待確認";
-  const risk = analysis?.risk_level || "Low";
+  const extracted = analysis?.extracted || {};
+  const fallbackLocation = currentLocation
+    ? `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)} (±${Math.round(currentLocation.accuracy)}m)`
+    : "未提供";
 
   return (
-    ex.description ||
+    extracted.description ||
     [
-      `案件類型：${category}`,
-      `地點：${location}`,
-      `傷勢：${injured}`,
-      `武器：${weapon}`,
-      `狀況：${danger}`,
-      `風險等級：${risk}`,
-      dispatch
+      `事件類型：${extracted.category || "未分類"}`,
+      `地點：${extracted.location || fallbackLocation}`,
+      `是否有人受傷：${extracted.people_injured === true ? "是" : extracted.people_injured === false ? "否" : "未知"}`,
+      `是否涉及武器：${extracted.weapon === true ? "是" : extracted.weapon === false ? "否" : "未知"}`,
+      `是否仍在危險中：${extracted.danger_active === true ? "是" : extracted.danger_active === false ? "否" : "未知"}`,
+      `風險等級：${analysis?.risk_level || "Low"}`,
+      extracted.dispatch_advice || "建議持續確認現場安全。"
     ].join(" | ")
   );
 }
 
-// ✅ 取得定位（一次）
 async function getLocationOnce() {
   return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject(new Error("此瀏覽器不支援定位"));
+    if (!navigator.geolocation) {
+      reject(new Error("此裝置不支援定位"));
+      return;
+    }
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const { latitude, longitude, accuracy } = pos.coords;
-        resolve({ lat: latitude, lng: longitude, accuracy });
+        resolve({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy
+        });
       },
       (err) => reject(err),
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
@@ -133,22 +155,14 @@ async function getLocationOnce() {
   });
 }
 
-// ✅ 彩窗顯示/關閉
 function openEscalateModal(data) {
   if (!escalateModal) return;
 
-  const hasExtractedLocation = Boolean(data?.extracted?.location);
-  const hasGeo = Boolean(currentLocation);
-  const dispatchAdvice = data?.extracted?.dispatch_advice || "建議派遣：待確認";
+  const dispatchAdvice = data?.extracted?.dispatch_advice || "建議盡快聯繫適當的報案單位。";
+  const locationText = data?.extracted?.location || (currentLocation ? `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}` : "尚未取得");
 
   if (escalateText) {
-    if (!hasExtractedLocation && !hasGeo) {
-      escalateText.textContent =
-        `系統判定可能有立即危害，建議立刻通報。⚠️ 為了快速派遣，請允許定位或手動輸入地址。\n${dispatchAdvice}\n按下「AI 報案中心」將建立一筆通報紀錄。`;
-    } else {
-      escalateText.textContent =
-        `系統判定可能有立即危害，建議立刻通報。\n${dispatchAdvice}\n按下「AI 報案中心」將建立一筆虛擬通報紀錄。`;
-    }
+    escalateText.textContent = `目前判定為高風險事件。\n位置：${locationText}\n${dispatchAdvice}`;
   }
 
   escalateModal.style.display = "flex";
@@ -161,51 +175,45 @@ function closeEscalateModal() {
   escalateModal.setAttribute("aria-hidden", "true");
 }
 
-// 初始先確保關閉
-if (escalateModal) {
-  escalateModal.style.display = "none";
-  escalateModal.setAttribute("aria-hidden", "true");
-}
+async function createReportFromLast() {
+  if (!lastAnalysis) {
+    addMessage("目前沒有可建立通報的分析結果。", "bot");
+    return;
+  }
 
-// 點背景也能關
-if (escalateModal) {
-  escalateModal.addEventListener("click", (e) => {
-    if (e.target === escalateModal) closeEscalateModal();
-  });
-}
+  const extracted = lastAnalysis.extracted || {};
+  const payload = {
+    title: extracted.category || "E-CARE 通報",
+    category: extracted.category || "未分類",
+    location: extracted.location || (currentLocation ? `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}` : "未提供"),
+    risk_level: lastAnalysis.risk_level || "Low",
+    risk_score: lastAnalysis.risk_score ?? 0,
+    description: buildIncidentDescription(lastAnalysis)
+  };
 
-// ESC 關閉
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeEscalateModal();
-});
+  goReportCenterBtn.disabled = true;
+  goReportCenterBtn.textContent = "建立中...";
 
-if (cancelEscalateBtn) {
-  cancelEscalateBtn.addEventListener("click", () => {
-    closeEscalateModal();
-    lastAnalysis = null;
-    addMessage("了解！如果狀況升級或你感到不安全，請立刻通報並移動到安全處。", "bot");
-  });
-}
+  try {
+    const response = await fetch(`${API_BASE}/reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(payload)
+    });
 
-if (goReportCenterBtn) {
-  goReportCenterBtn.addEventListener("click", async () => {
-    goReportCenterBtn.disabled = true;
-    goReportCenterBtn.textContent = "建立通報中…";
-
-    try {
-      closeEscalateModal();
-      await createReportFromLast();
-      userInput.value = "";
-      lastAnalysis = null;
-    } finally {
-      goReportCenterBtn.disabled = false;
-      goReportCenterBtn.textContent = "連線 AI 報案中心（Demo）";
+    if (!response.ok) {
+      throw new Error(await response.text());
     }
-  });
-}
 
-async function sendMessage() {
-  return sendMessageWithOptions();
+    addMessage("已建立通報紀錄，並送往 AI 報案中心（Demo）。", "bot");
+    closeEscalateModal();
+  } catch (error) {
+    addMessage(`建立通報失敗：${error.message || error}`, "bot");
+  } finally {
+    goReportCenterBtn.disabled = false;
+    goReportCenterBtn.textContent = "前往 AI 報案中心（Demo）";
+  }
 }
 
 async function sendMessageWithOptions(options = {}) {
@@ -218,418 +226,206 @@ async function sendMessageWithOptions(options = {}) {
   const text = (textOverride ?? userInput.value).trim();
   if (!text) return;
 
-  try {
-    if (!currentLocation) {
-      currentLocation = await getLocationOnce();
-      addMessage("📍 已取得目前定位，可用於協助案件派遣。", "bot");
-    }
-  } catch (e) {
-    console.warn("定位取得失敗：", e);
-  }
-
   if (showUserBubble) {
     addMessage(text, "user");
   }
+
   messages.push({ role: "user", content: text });
   userInput.value = "";
 
-  const typing = document.createElement("div");
-  typing.classList.add("message", "bot");
-  typing.textContent = "（E-CARE 正在分析…）";
-  chatContainer.appendChild(typing);
-  chatContainer.scrollTop = chatContainer.scrollHeight;
+  try {
+    if (!currentLocation) {
+      currentLocation = await getLocationOnce();
+      addMessage("已取得目前定位，可用於協助案件派遣。", "bot");
+    }
+  } catch (locationError) {
+    console.warn("[E-CARE] location warning", locationError);
+  }
+
+  const typing = addTypingBubble();
 
   try {
-    const r = await fetch(`${API_BASE}/chat`, {
+    console.log("[E-CARE] POST", `${API_BASE}/chat`);
+    const response = await fetch(`${API_BASE}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      cache: "no-store",
       body: JSON.stringify({
         messages,
         audio_context: audioContext
       })
     });
 
-    if (!r.ok) throw new Error(await r.text());
-    const data = await r.json();
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
 
+    const data = await response.json();
     typing.remove();
 
-    addMessage(data.reply, "bot");
-    messages.push({ role: "assistant", content: data.reply });
+    addMessage(data.reply || "我收到你的訊息了。", "bot");
+    messages.push({ role: "assistant", content: data.reply || "我收到你的訊息了。" });
 
     if (data.extracted?.dispatch_advice) {
-      addMessage(`🚨 ${data.extracted.dispatch_advice}`, "bot");
-      messages.push({ role: "assistant", content: data.extracted.dispatch_advice });
+      addMessage(`派遣建議：${data.extracted.dispatch_advice}`, "bot");
     }
 
     if (data.next_question) {
       addMessage(data.next_question, "bot");
-      messages.push({ role: "assistant", content: data.next_question });
     }
 
     setRiskUI(data);
+    lastAnalysis = data;
 
-    const isRealUserMessage = text && text.length > 0;
-
-    if (isRealUserMessage && data.risk_level === "High") {
-      lastAnalysis = data;
-
+    if (data.risk_level === "High") {
       setTimeout(() => openEscalateModal(data), 150);
-
-      addMessage("⚠️ 系統判定高風險：建議立刻通報。我可以協助你建立通報（Demo）。", "bot");
-    } else {
-      lastAnalysis = data;
+      addMessage("這起事件風險偏高，如需要我可以協助你整理通報內容。", "bot");
     }
-  } catch (e) {
+  } catch (error) {
     typing.remove();
-    addMessage("❌ 連線後端失敗，請確認 FastAPI 是否正在執行，且 API_BASE IP 設定正確。", "bot");
-    console.error(e);
+    addMessage("連線後端失敗，請稍後再試。", "bot");
+    console.error("[E-CARE] chat failed", error);
   }
 }
 
-let recordStartTime = 0;
-let lastRecordedBlob = null;
+async function sendMessage() {
+  return sendMessageWithOptions();
+}
 
 function formatDuration(seconds) {
-  const s = Math.max(0, Math.floor(seconds));
-  const mm = Math.floor(s / 60);
-  const ss = String(s % 60).padStart(2, "0");
+  const total = Math.max(0, Math.floor(seconds));
+  const mm = Math.floor(total / 60);
+  const ss = String(total % 60).padStart(2, "0");
   return `${mm}:${ss}`;
 }
 
 function createWaveBars(count = 26) {
-  let html = "";
-  for (let i = 0; i < count; i++) {
-    const h = 10 + Math.floor(Math.random() * 28);
-    html += `<div class="voice-bar" style="height:${h}px"></div>`;
+  const wave = document.createElement("div");
+  wave.className = "voice-wave";
+
+  for (let i = 0; i < count; i += 1) {
+    const bar = document.createElement("span");
+    bar.className = "voice-bar";
+    bar.style.height = `${10 + ((i * 7) % 24)}px`;
+    wave.appendChild(bar);
   }
-  return html;
+
+  return wave;
 }
 
 function addVoiceMessage(audioUrl, durationSec, onAnalyze) {
-  const wrap = document.createElement("div");
-  wrap.className = "message user";
-  wrap.innerHTML = `
-    <div class="voice-message">
-      <div class="voice-row">
-        <button class="voice-play" type="button">▶</button>
-        <div class="voice-wave">${createWaveBars()}</div>
-        <div class="voice-duration">${formatDuration(durationSec)}</div>
-      </div>
+  const wrapper = document.createElement("div");
+  wrapper.className = "voice-message";
 
-      <div class="voice-actions">
-        <button class="voice-send" type="button">送出分析</button>
-      </div>
+  const row = document.createElement("div");
+  row.className = "voice-row";
 
-      <div class="voice-meta">🎤 已錄製語音訊息，送出後系統會分析情緒、語意與危急程度。</div>
-      <div class="voice-analysis" hidden></div>
-    </div>
-  `;
+  const playBtn = document.createElement("button");
+  playBtn.type = "button";
+  playBtn.className = "voice-play";
+  playBtn.textContent = "▶";
 
   const audio = new Audio(audioUrl);
-  const playBtn = wrap.querySelector(".voice-play");
-  const wave = wrap.querySelector(".voice-wave");
-  const sendBtn = wrap.querySelector(".voice-send");
-  const analysisBox = wrap.querySelector(".voice-analysis");
-  const metaBox = wrap.querySelector(".voice-meta");
+  const wave = createWaveBars();
 
-  if (sendBtn) sendBtn.textContent = "送出語音";
-  if (metaBox && !SHOW_VOICE_DEBUG) metaBox.hidden = true;
-  if (analysisBox && !SHOW_VOICE_DEBUG) analysisBox.hidden = true;
+  const duration = document.createElement("div");
+  duration.className = "voice-duration";
+  duration.textContent = formatDuration(durationSec);
 
-  let playing = false;
+  row.append(playBtn, wave, duration);
 
-  playBtn.addEventListener("click", async () => {
-    try {
-      if (!playing) {
-        await audio.play();
-        playing = true;
-        playBtn.textContent = "❚❚";
-        wave.classList.add("playing");
-      } else {
-        audio.pause();
-        audio.currentTime = 0;
-        playing = false;
-        playBtn.textContent = "▶";
-        wave.classList.remove("playing");
-      }
-    } catch (err) {
-      console.error("播放失敗：", err);
-    }
-  });
+  const actions = document.createElement("div");
+  actions.className = "voice-actions";
 
-  audio.addEventListener("ended", () => {
-    playing = false;
-    playBtn.textContent = "▶";
-    wave.classList.remove("playing");
-  });
+  const sendVoiceBtn = document.createElement("button");
+  sendVoiceBtn.type = "button";
+  sendVoiceBtn.textContent = "送出語音";
+  actions.appendChild(sendVoiceBtn);
 
-  sendBtn.addEventListener("click", async () => {
-    sendBtn.disabled = true;
-    sendBtn.textContent = "分析中...";
-    analysisBox.hidden = false;
-    analysisBox.innerHTML = "⏳ 系統正在分析語音內容、情緒與危急程度...";
+  const meta = document.createElement("div");
+  meta.className = "voice-meta";
+  meta.hidden = !SHOW_VOICE_DEBUG;
+  meta.textContent = "錄音送出後，系統會分析語意、情緒與危急程度。";
 
-    try {
-      const result = await onAnalyze();
+  const analysis = document.createElement("div");
+  analysis.className = "voice-analysis";
+  analysis.hidden = !SHOW_VOICE_DEBUG;
 
-      const transcript = (result.transcript || "").trim();
-      const emotion = result.emotion || "unknown";
-      const emotionScore =
-        result.emotion_score !== undefined && result.emotion_score !== null
-          ? Number(result.emotion_score).toFixed(2)
-          : "-";
-      const situation = result.situation || "未判定";
-      const riskLevel = result.risk_level || "未知";
-      const riskScore =
-        result.risk_score !== undefined && result.risk_score !== null
-          ? Number(result.risk_score).toFixed(2)
-          : "-";
-
-      analysisBox.innerHTML = `
-        <strong>語音轉文字：</strong>${transcript || "（未辨識到文字）"}<br>
-        <strong>情緒辨識：</strong>${emotion}（${emotionScore}）<br>
-        <strong>情境判斷：</strong>${situation}<br>
-        <strong>危急程度：</strong>${riskLevel}（${riskScore}）
-      `;
-
-      if (transcript) {
-        userInput.value = transcript;
-      }
-
-      if (typeof setRiskUI === "function" && result.risk_level) {
-        setRiskUI({
-          risk_level: result.risk_level,
-          risk_score: result.risk_score || 0
-        });
-      }
-
-      if (typeof addMessage === "function") {
-        addMessage("✅ 語音分析完成。", "bot");
-      }
-      if (typeof addMessage === "function") {
-        addMessage("我已經整理出你剛剛說的內容，接著會依照語意、情緒和風險來回覆你。", "bot");
-      }
-
-      if (transcript) {
-        await sendMessageWithOptions({
-          textOverride: transcript,
-          audioContext: {
-            transcript,
-            emotion,
-            emotion_score: result.emotion_score,
-            situation,
-            risk_level: result.risk_level,
-            risk_score: result.risk_score,
-            extracted: result.extracted || null
-          },
-          showUserBubble: false
-        });
-      }
-    } catch (e) {
-      analysisBox.innerHTML = "❌ 音訊上傳或分析失敗";
-      console.error(e);
-    } finally {
-      sendBtn.disabled = false;
-      sendBtn.textContent = "重新分析";
-    }
-  });
-
-  chatContainer.appendChild(wrap);
-  chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-// Override the earlier debug-heavy version with a user-facing voice flow.
-function addVoiceMessage(audioUrl, durationSec, onAnalyze) {
-  const wrap = document.createElement("div");
-  wrap.className = "message user";
-  wrap.innerHTML = `
-    <div class="voice-message">
-      <div class="voice-row">
-        <button class="voice-play" type="button">▶</button>
-        <div class="voice-wave">${createWaveBars()}</div>
-        <div class="voice-duration">${formatDuration(durationSec)}</div>
-      </div>
-      <div class="voice-actions">
-        <button class="voice-send" type="button">送出語音</button>
-      </div>
-      <div class="voice-meta" ${SHOW_VOICE_DEBUG ? "" : "hidden"}>
-        錄音送出後，系統會分析語意、情緒與危急程度。
-      </div>
-      <div class="voice-analysis" hidden></div>
-    </div>
-  `;
-
-  const audio = new Audio(audioUrl);
-  const playBtn = wrap.querySelector(".voice-play");
-  const wave = wrap.querySelector(".voice-wave");
-  const sendBtn = wrap.querySelector(".voice-send");
-  const analysisBox = wrap.querySelector(".voice-analysis");
-
-  let playing = false;
+  wrapper.append(row, actions, meta, analysis);
+  chatContainer.appendChild(wrapper);
+  scrollToBottom();
 
   playBtn.addEventListener("click", async () => {
-    try {
-      if (!playing) {
-        await audio.play();
-        playing = true;
-        playBtn.textContent = "■";
-        wave.classList.add("playing");
-      } else {
-        audio.pause();
-        audio.currentTime = 0;
-        playing = false;
-        playBtn.textContent = "▶";
-        wave.classList.remove("playing");
-      }
-    } catch (err) {
-      console.error("音訊播放失敗", err);
-    }
-  });
-
-  audio.addEventListener("ended", () => {
-    playing = false;
-    playBtn.textContent = "▶";
-    wave.classList.remove("playing");
-  });
-
-  sendBtn.addEventListener("click", async () => {
-    sendBtn.disabled = true;
-    sendBtn.textContent = "處理中...";
-
-    if (SHOW_VOICE_DEBUG) {
-      analysisBox.hidden = false;
-      analysisBox.innerHTML = "正在辨識語音、情緒與風險...";
+    if (audio.paused) {
+      await audio.play();
+      playBtn.textContent = "⏸";
+      wave.classList.add("playing");
     } else {
-      analysisBox.hidden = true;
-      analysisBox.innerHTML = "";
+      audio.pause();
+      playBtn.textContent = "▶";
+      wave.classList.remove("playing");
     }
+  });
+
+  audio.addEventListener("ended", () => {
+    playBtn.textContent = "▶";
+    wave.classList.remove("playing");
+  });
+
+  sendVoiceBtn.addEventListener("click", async () => {
+    sendVoiceBtn.disabled = true;
+    sendVoiceBtn.textContent = "處理中...";
 
     try {
+      if (SHOW_VOICE_DEBUG) {
+        analysis.hidden = false;
+        analysis.textContent = "正在辨識語音、情緒與風險...";
+      }
+
       const result = await onAnalyze();
       const transcript = (result.transcript || "").trim();
-      const emotion = result.emotion || "unknown";
-      const emotionScore =
-        result.emotion_score !== undefined && result.emotion_score !== null
-          ? Number(result.emotion_score).toFixed(2)
-          : "-";
-      const situation = result.situation || "未判定";
-      const riskLevel = result.risk_level || "未知";
-      const riskScore =
-        result.risk_score !== undefined && result.risk_score !== null
-          ? Number(result.risk_score).toFixed(2)
-          : "-";
 
       if (SHOW_VOICE_DEBUG) {
-        analysisBox.hidden = false;
-        analysisBox.innerHTML = `
-          <strong>語音文字：</strong>${transcript || "未辨識到有效內容"}<br>
-          <strong>情緒辨識：</strong>${emotion}（${emotionScore}）<br>
-          <strong>情境判斷：</strong>${situation}<br>
-          <strong>危急程度：</strong>${riskLevel}（${riskScore}）
-        `;
-      } else {
-        analysisBox.hidden = true;
-        analysisBox.innerHTML = "";
+        analysis.hidden = false;
+        analysis.innerHTML = [
+          `語音文字：${transcript || "未辨識到有效內容"}`,
+          `情緒辨識：${result.emotion || "unknown"}（${Number(result.emotion_score ?? 0).toFixed(2)}）`,
+          `情境判斷：${result.situation || "未提供"}`,
+          `危急程度：${result.risk_level || "Low"}（${Number(result.risk_score ?? 0).toFixed(2)}）`
+        ].join("<br>");
       }
 
-      if (transcript) {
-        userInput.value = transcript;
-      }
-
-      if (typeof setRiskUI === "function" && result.risk_level) {
-        setRiskUI({
-          risk_level: result.risk_level,
-          risk_score: result.risk_score || 0
-        });
+      if (!transcript) {
+        addMessage("沒有辨識到清楚的語音內容，請再說一次。", "bot");
+        return;
       }
 
       addMessage("我收到你的語音了，正在幫你整理重點。", "bot");
-
-      if (transcript) {
-        await sendMessageWithOptions({
-          textOverride: transcript,
-          audioContext: {
-            transcript,
-            emotion,
-            emotion_score: result.emotion_score,
-            situation,
-            risk_level: result.risk_level,
-            risk_score: result.risk_score,
-            extracted: result.extracted || null
-          },
-          showUserBubble: false
-        });
-      }
-    } catch (e) {
+      await sendMessageWithOptions({
+        textOverride: transcript,
+        audioContext: {
+          transcript,
+          emotion: result.emotion || "unknown",
+          emotion_score: result.emotion_score,
+          situation: result.situation || "",
+          risk_level: result.risk_level || "Low",
+          risk_score: result.risk_score,
+          extracted: result.extracted || null
+        },
+        showUserBubble: false
+      });
+    } catch (error) {
       if (SHOW_VOICE_DEBUG) {
-        analysisBox.hidden = false;
-        analysisBox.innerHTML = "語音分析失敗，請再試一次。";
-      } else {
-        analysisBox.hidden = true;
-        analysisBox.innerHTML = "";
+        analysis.hidden = false;
+        analysis.textContent = `語音分析失敗：${error.message || error}`;
       }
 
       addMessage("語音處理失敗，請再錄一次，或直接輸入文字。", "bot");
-      console.error(e);
+      console.error("[E-CARE] audio failed", error);
     } finally {
-      sendBtn.disabled = false;
-      sendBtn.textContent = "送出語音";
+      sendVoiceBtn.disabled = false;
+      sendVoiceBtn.textContent = "送出語音";
     }
-  });
-
-  chatContainer.appendChild(wrap);
-  chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-// ====== 🎙️ 錄音→語音泡泡→播放→送出分析 ======
-if (recBtn) {
-  recBtn.addEventListener("click", async () => {
-    if (!isRecording) await startRecording();
-    else await stopRecordingAndPreview();
-  });
-}
-
-async function startRecording() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioChunks = [];
-
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-
-    recordStartTime = Date.now();
-    mediaRecorder.start();
-    isRecording = true;
-    recBtn.classList.add("active");
-    addMessage("🎙️ 開始錄音中…再次按下即可停止。", "bot");
-  } catch (e) {
-    alert("無法取得麥克風權限：" + e.message);
-  }
-}
-
-async function stopRecordingAndPreview() {
-  if (!mediaRecorder) return;
-
-  const stopped = new Promise((resolve) => {
-    mediaRecorder.onstop = resolve;
-  });
-
-  mediaRecorder.stop();
-  isRecording = false;
-  recBtn.classList.remove("active");
-  await stopped;
-
-  const blob = new Blob(audioChunks, { type: "audio/webm" });
-  lastRecordedBlob = blob;
-
-  const durationSec = (Date.now() - recordStartTime) / 1000;
-  const audioUrl = URL.createObjectURL(blob);
-
-  addVoiceMessage(audioUrl, durationSec, async () => {
-    return await uploadAudio(blob);
   });
 }
 
@@ -637,69 +433,123 @@ async function uploadAudio(blob) {
   const form = new FormData();
   form.append("audio", blob, "recording.webm");
 
-  const r = await fetch(`${API_BASE}/audio`, {
+  console.log("[E-CARE] POST", `${API_BASE}/audio`);
+  const response = await fetch(`${API_BASE}/audio`, {
     method: "POST",
+    cache: "no-store",
     body: form
   });
 
-  if (!r.ok) throw new Error(await r.text());
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
 
-  const data = await r.json();
-
+  const data = await response.json();
   return {
     transcript: (data.transcript || "").trim(),
-    emotion: data.emotion || "",
+    emotion: data.emotion || "unknown",
     emotion_score: data.emotion_score,
-    situation: data.situation || "",
-    risk_level: data.risk_level || "",
+    situation: data.situation || "未提供",
+    risk_level: data.risk_level || "Low",
     risk_score: data.risk_score,
     extracted: data.extracted || null
   };
 }
 
-// ====== ✅ 建立通報（Demo）→ 導去 records.html ======
-async function createReportFromLast() {
-  if (!lastAnalysis) {
-    addMessage("目前沒有可建立的通報資料（請先描述事件讓我分析）。", "bot");
-    return;
-  }
-
-  const ex = lastAnalysis.extracted || {};
-  const category = ex.category || "待確認";
-
-  const location =
-    ex.location ||
-    (currentLocation
-      ? `${currentLocation.lat.toFixed(6)},${currentLocation.lng.toFixed(6)} (±${Math.round(currentLocation.accuracy)}m)`
-      : "未提供");
-
-  const description = buildIncidentDescription(lastAnalysis);
-  const title = `${category}`;
-
+async function startRecording() {
   try {
-    addMessage("📡 正在連線 AI 報案中心（Demo）並建立通報紀錄…", "bot");
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    const r = await fetch(`${API_BASE}/reports`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title,
-        category,
-        location,
-        risk_level: lastAnalysis.risk_level,
-        risk_score: lastAnalysis.risk_score,
-        description
-      })
-    });
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
 
-    if (!r.ok) throw new Error(await r.text());
-    const created = await r.json();
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach((track) => track.stop());
+    };
 
-    addMessage(`✅ 通報已建立：${created.id}（${created.status}）`, "bot");
-
-    window.location.href = "records.html";
-  } catch (e) {
-    addMessage("❌ 建立通報失敗（請確認後端 /reports 正在執行）", "bot");
-    console.error(e);
+    recordStartTime = Date.now();
+    mediaRecorder.start();
+    isRecording = true;
+    recBtn.classList.add("active");
+    recHint.textContent = "開始錄音中，再按一次即可停止。";
+    addMessage("開始錄音中，再按一次即可停止。", "bot");
+  } catch (error) {
+    alert(`無法取得麥克風權限：${error.message}`);
   }
 }
+
+async function stopRecordingAndPreview() {
+  if (!mediaRecorder) return;
+
+  const stopped = new Promise((resolve) => {
+    mediaRecorder.addEventListener("stop", resolve, { once: true });
+  });
+
+  mediaRecorder.stop();
+  isRecording = false;
+  recBtn.classList.remove("active");
+  recHint.textContent = "";
+
+  await stopped;
+
+  const blob = new Blob(audioChunks, { type: "audio/webm" });
+  const durationSec = (Date.now() - recordStartTime) / 1000;
+  const audioUrl = URL.createObjectURL(blob);
+
+  addVoiceMessage(audioUrl, durationSec, async () => uploadAudio(blob));
+}
+
+if (sendBtn) {
+  sendBtn.addEventListener("click", sendMessage);
+}
+
+if (userInput) {
+  userInput.addEventListener("keypress", (event) => {
+    if (event.key === "Enter") {
+      sendMessage();
+    }
+  });
+}
+
+if (recBtn) {
+  recBtn.addEventListener("click", async () => {
+    if (isRecording) {
+      await stopRecordingAndPreview();
+    } else {
+      await startRecording();
+    }
+  });
+}
+
+if (cancelEscalateBtn) {
+  cancelEscalateBtn.addEventListener("click", closeEscalateModal);
+}
+
+if (goReportCenterBtn) {
+  goReportCenterBtn.addEventListener("click", createReportFromLast);
+}
+
+if (escalateModal) {
+  escalateModal.style.display = "none";
+  escalateModal.setAttribute("aria-hidden", "true");
+  escalateModal.addEventListener("click", (event) => {
+    if (event.target === escalateModal) {
+      closeEscalateModal();
+    }
+  });
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeEscalateModal();
+  }
+});
+
+runConnectivityProbe();
+
+
