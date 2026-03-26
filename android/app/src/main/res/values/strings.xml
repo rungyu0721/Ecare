@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">E-CARE</string>
+    <string name="title_activity_main">E-CARE</string>
+    <string name="package_name">com.ecare.app</string>
+    <string name="custom_url_scheme">com.ecare.app</string>
+</resources>

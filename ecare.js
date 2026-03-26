@@ -21,6 +21,7 @@ const recBtn = document.getElementById("recBtn");
 let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
+const SHOW_VOICE_DEBUG = false;
 
 let messages = [
   { role: "assistant", content: "您好，我是 E-CARE 🤖 請問現在發生什麼事？我會一步步幫助您。" }
@@ -204,7 +205,17 @@ if (goReportCenterBtn) {
 }
 
 async function sendMessage() {
-  const text = userInput.value.trim();
+  return sendMessageWithOptions();
+}
+
+async function sendMessageWithOptions(options = {}) {
+  const {
+    textOverride = null,
+    audioContext = null,
+    showUserBubble = true
+  } = options;
+
+  const text = (textOverride ?? userInput.value).trim();
   if (!text) return;
 
   try {
@@ -216,7 +227,9 @@ async function sendMessage() {
     console.warn("定位取得失敗：", e);
   }
 
-  addMessage(text, "user");
+  if (showUserBubble) {
+    addMessage(text, "user");
+  }
   messages.push({ role: "user", content: text });
   userInput.value = "";
 
@@ -230,7 +243,10 @@ async function sendMessage() {
     const r = await fetch(`${API_BASE}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages })
+      body: JSON.stringify({
+        messages,
+        audio_context: audioContext
+      })
     });
 
     if (!r.ok) throw new Error(await r.text());
@@ -315,6 +331,11 @@ function addVoiceMessage(audioUrl, durationSec, onAnalyze) {
   const wave = wrap.querySelector(".voice-wave");
   const sendBtn = wrap.querySelector(".voice-send");
   const analysisBox = wrap.querySelector(".voice-analysis");
+  const metaBox = wrap.querySelector(".voice-meta");
+
+  if (sendBtn) sendBtn.textContent = "送出語音";
+  if (metaBox && !SHOW_VOICE_DEBUG) metaBox.hidden = true;
+  if (analysisBox && !SHOW_VOICE_DEBUG) analysisBox.hidden = true;
 
   let playing = false;
 
@@ -386,12 +407,174 @@ function addVoiceMessage(audioUrl, durationSec, onAnalyze) {
       if (typeof addMessage === "function") {
         addMessage("✅ 語音分析完成。", "bot");
       }
+      if (typeof addMessage === "function") {
+        addMessage("我已經整理出你剛剛說的內容，接著會依照語意、情緒和風險來回覆你。", "bot");
+      }
+
+      if (transcript) {
+        await sendMessageWithOptions({
+          textOverride: transcript,
+          audioContext: {
+            transcript,
+            emotion,
+            emotion_score: result.emotion_score,
+            situation,
+            risk_level: result.risk_level,
+            risk_score: result.risk_score,
+            extracted: result.extracted || null
+          },
+          showUserBubble: false
+        });
+      }
     } catch (e) {
       analysisBox.innerHTML = "❌ 音訊上傳或分析失敗";
       console.error(e);
     } finally {
       sendBtn.disabled = false;
       sendBtn.textContent = "重新分析";
+    }
+  });
+
+  chatContainer.appendChild(wrap);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+// Override the earlier debug-heavy version with a user-facing voice flow.
+function addVoiceMessage(audioUrl, durationSec, onAnalyze) {
+  const wrap = document.createElement("div");
+  wrap.className = "message user";
+  wrap.innerHTML = `
+    <div class="voice-message">
+      <div class="voice-row">
+        <button class="voice-play" type="button">▶</button>
+        <div class="voice-wave">${createWaveBars()}</div>
+        <div class="voice-duration">${formatDuration(durationSec)}</div>
+      </div>
+      <div class="voice-actions">
+        <button class="voice-send" type="button">送出語音</button>
+      </div>
+      <div class="voice-meta" ${SHOW_VOICE_DEBUG ? "" : "hidden"}>
+        錄音送出後，系統會分析語意、情緒與危急程度。
+      </div>
+      <div class="voice-analysis" hidden></div>
+    </div>
+  `;
+
+  const audio = new Audio(audioUrl);
+  const playBtn = wrap.querySelector(".voice-play");
+  const wave = wrap.querySelector(".voice-wave");
+  const sendBtn = wrap.querySelector(".voice-send");
+  const analysisBox = wrap.querySelector(".voice-analysis");
+
+  let playing = false;
+
+  playBtn.addEventListener("click", async () => {
+    try {
+      if (!playing) {
+        await audio.play();
+        playing = true;
+        playBtn.textContent = "■";
+        wave.classList.add("playing");
+      } else {
+        audio.pause();
+        audio.currentTime = 0;
+        playing = false;
+        playBtn.textContent = "▶";
+        wave.classList.remove("playing");
+      }
+    } catch (err) {
+      console.error("音訊播放失敗", err);
+    }
+  });
+
+  audio.addEventListener("ended", () => {
+    playing = false;
+    playBtn.textContent = "▶";
+    wave.classList.remove("playing");
+  });
+
+  sendBtn.addEventListener("click", async () => {
+    sendBtn.disabled = true;
+    sendBtn.textContent = "處理中...";
+
+    if (SHOW_VOICE_DEBUG) {
+      analysisBox.hidden = false;
+      analysisBox.innerHTML = "正在辨識語音、情緒與風險...";
+    } else {
+      analysisBox.hidden = true;
+      analysisBox.innerHTML = "";
+    }
+
+    try {
+      const result = await onAnalyze();
+      const transcript = (result.transcript || "").trim();
+      const emotion = result.emotion || "unknown";
+      const emotionScore =
+        result.emotion_score !== undefined && result.emotion_score !== null
+          ? Number(result.emotion_score).toFixed(2)
+          : "-";
+      const situation = result.situation || "未判定";
+      const riskLevel = result.risk_level || "未知";
+      const riskScore =
+        result.risk_score !== undefined && result.risk_score !== null
+          ? Number(result.risk_score).toFixed(2)
+          : "-";
+
+      if (SHOW_VOICE_DEBUG) {
+        analysisBox.hidden = false;
+        analysisBox.innerHTML = `
+          <strong>語音文字：</strong>${transcript || "未辨識到有效內容"}<br>
+          <strong>情緒辨識：</strong>${emotion}（${emotionScore}）<br>
+          <strong>情境判斷：</strong>${situation}<br>
+          <strong>危急程度：</strong>${riskLevel}（${riskScore}）
+        `;
+      } else {
+        analysisBox.hidden = true;
+        analysisBox.innerHTML = "";
+      }
+
+      if (transcript) {
+        userInput.value = transcript;
+      }
+
+      if (typeof setRiskUI === "function" && result.risk_level) {
+        setRiskUI({
+          risk_level: result.risk_level,
+          risk_score: result.risk_score || 0
+        });
+      }
+
+      addMessage("我收到你的語音了，正在幫你整理重點。", "bot");
+
+      if (transcript) {
+        await sendMessageWithOptions({
+          textOverride: transcript,
+          audioContext: {
+            transcript,
+            emotion,
+            emotion_score: result.emotion_score,
+            situation,
+            risk_level: result.risk_level,
+            risk_score: result.risk_score,
+            extracted: result.extracted || null
+          },
+          showUserBubble: false
+        });
+      }
+    } catch (e) {
+      if (SHOW_VOICE_DEBUG) {
+        analysisBox.hidden = false;
+        analysisBox.innerHTML = "語音分析失敗，請再試一次。";
+      } else {
+        analysisBox.hidden = true;
+        analysisBox.innerHTML = "";
+      }
+
+      addMessage("語音處理失敗，請再錄一次，或直接輸入文字。", "bot");
+      console.error(e);
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.textContent = "送出語音";
     }
   });
 
@@ -469,7 +652,8 @@ async function uploadAudio(blob) {
     emotion_score: data.emotion_score,
     situation: data.situation || "",
     risk_level: data.risk_level || "",
-    risk_score: data.risk_score
+    risk_score: data.risk_score,
+    extracted: data.extracted || null
   };
 }
 

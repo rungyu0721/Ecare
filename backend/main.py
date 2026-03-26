@@ -39,6 +39,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
+    audio_context: Optional[Dict[str, Any]] = None
 
 
 class Extracted(BaseModel):
@@ -51,6 +52,21 @@ class Extracted(BaseModel):
     description: Optional[str] = None
 
 
+class SemanticEntities(BaseModel):
+    location: Optional[str] = None
+    injured: Optional[bool] = None
+    weapon: Optional[bool] = None
+    danger_active: Optional[bool] = None
+
+
+class SemanticUnderstanding(BaseModel):
+    intent: str = "未知"
+    primary_need: str = "釐清狀況"
+    emotion: str = "neutral"
+    reply_strategy: str = "先確認事件重點"
+    entities: SemanticEntities = SemanticEntities()
+
+
 class ChatResponse(BaseModel):
     reply: str
     risk_score: float
@@ -58,6 +74,7 @@ class ChatResponse(BaseModel):
     should_escalate: bool
     next_question: Optional[str]
     extracted: Extracted
+    semantic: SemanticUnderstanding
 
 
 # ======================
@@ -459,6 +476,245 @@ JSON 格式如下：
     return data
 
 
+def gemini_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if GEMINI_CLIENT is None:
+        raise RuntimeError("Gemini client not ready")
+
+    recent = messages[-10:]
+    context = "\n".join(
+        f"{'使用者' if m.role == 'user' else '助理'}：{m.content}"
+        for m in recent
+    )
+
+    audio_context_text = "無"
+    if audio_context:
+        safe_audio_context = {
+            "transcript": audio_context.get("transcript"),
+            "emotion": audio_context.get("emotion"),
+            "emotion_score": audio_context.get("emotion_score"),
+            "situation": audio_context.get("situation"),
+            "risk_level": audio_context.get("risk_level"),
+            "risk_score": audio_context.get("risk_score"),
+            "extracted": audio_context.get("extracted"),
+        }
+        audio_context_text = json.dumps(safe_audio_context, ensure_ascii=False)
+
+    prompt = f"""
+你是 E-CARE 的緊急關懷助理，要像冷靜、可靠、有同理心的真人助理一樣回應。
+
+回覆原則：
+- 先簡短接住使用者情緒，再提供實際協助
+- 若資訊不足，一次只追問一個最重要的問題
+- 如果風險高，優先確認安全、位置、是否有人受傷
+- reply 一律使用繁體中文，自然口語，不要寫得像表單或系統訊息
+- 只能輸出 JSON，不要加註解或 markdown
+
+category 只能是：
+- 火災
+- 暴力傷害
+- 自殺風險
+- 車禍傷病
+- 持械威脅
+- 其他危急事件
+- 未知
+
+risk_level 只能是：
+- Low
+- Medium
+- High
+
+輸出格式：
+{{
+  "reply": "string",
+  "risk_score": 0.0,
+  "risk_level": "Low",
+  "should_escalate": false,
+  "next_question": "string",
+  "extracted": {{
+    "category": "string|null",
+    "location": "string|null",
+    "people_injured": true,
+    "weapon": false,
+    "danger_active": true,
+    "dispatch_advice": "string|null",
+    "description": "string|null"
+  }}
+}}
+
+風險判斷原則：
+- 明確人身危險、武器、火勢、持續暴力、重傷，傾向 High
+- 有受傷、威脅、自傷風險、狀況未明但令人擔心，傾向 Medium
+- 單純諮詢、情緒低落但無立即危險，傾向 Low
+
+最新語音分析：
+{audio_context_text}
+
+對話內容：
+{context}
+"""
+
+    resp = GEMINI_CLIENT.models.generate_content(
+        model=GEMINI_MODEL_NAME,
+        contents=prompt
+    )
+
+    text = (resp.text or "").strip()
+
+    if text.startswith("```"):
+        text = text.replace("```json", "").replace("```", "").strip()
+
+    return json.loads(text)
+
+
+def semantic_understanding_from_text(
+    text: str,
+    audio_context: Optional[Dict[str, Any]] = None,
+    extracted: Optional[Extracted] = None
+) -> SemanticUnderstanding:
+    fallback_entities = SemanticEntities(
+        location=(extracted.location if extracted else None),
+        injured=(extracted.people_injured if extracted else None),
+        weapon=(extracted.weapon if extracted else None),
+        danger_active=(extracted.danger_active if extracted else None),
+    )
+
+    if not text.strip():
+        return SemanticUnderstanding(entities=fallback_entities)
+
+    if GEMINI_CLIENT is None:
+        intent = "求救" if any(k in text for k in ["救", "幫", "快點", "危險"]) else "資訊補充"
+        primary_need = "立即安全協助" if any(k in text for k in ["救", "危險", "受傷"]) else "釐清狀況"
+        reply_strategy = "先安撫，再確認位置與安全" if any(k in text for k in ["怕", "救", "危險"]) else "先確認事件重點"
+        emotion = "panic" if audio_context and audio_context.get("emotion") in ["panic", "fearful"] else "neutral"
+        return SemanticUnderstanding(
+            intent=intent,
+            primary_need=primary_need,
+            emotion=emotion,
+            reply_strategy=reply_strategy,
+            entities=fallback_entities
+        )
+
+    safe_audio_context = {
+        "transcript": (audio_context or {}).get("transcript"),
+        "emotion": (audio_context or {}).get("emotion"),
+        "emotion_score": (audio_context or {}).get("emotion_score"),
+        "risk_level": (audio_context or {}).get("risk_level"),
+        "risk_score": (audio_context or {}).get("risk_score"),
+    }
+    safe_extracted = extracted.dict() if extracted else {}
+
+    prompt = f"""
+你是語意理解模組。請根據使用者文字、語音情緒與事件抽取結果，輸出語意理解 JSON。
+
+規則：
+- 只能輸出 JSON
+- intent 只能是：求救、通報、詢問、情緒支持、資訊補充、未知
+- primary_need 要簡短描述此刻最需要的協助
+- emotion 可綜合文字語氣與語音情緒
+- reply_strategy 要描述助理最適合的回應策略
+
+輸出格式：
+{{
+  "intent": "string",
+  "primary_need": "string",
+  "emotion": "string",
+  "reply_strategy": "string",
+  "entities": {{
+    "location": "string|null",
+    "injured": true,
+    "weapon": false,
+    "danger_active": true
+  }}
+}}
+
+文字：
+{text}
+
+語音脈絡：
+{json.dumps(safe_audio_context, ensure_ascii=False)}
+
+事件抽取：
+{json.dumps(safe_extracted, ensure_ascii=False)}
+"""
+
+    resp = GEMINI_CLIENT.models.generate_content(
+        model=GEMINI_MODEL_NAME,
+        contents=prompt
+    )
+
+    result_text = (resp.text or "").strip()
+    if result_text.startswith("```"):
+        result_text = result_text.replace("```json", "").replace("```", "").strip()
+
+    try:
+        data = json.loads(result_text)
+        entities = data.get("entities", {}) or {}
+        return SemanticUnderstanding(
+            intent=data.get("intent") or "未知",
+            primary_need=data.get("primary_need") or "釐清狀況",
+            emotion=data.get("emotion") or ((audio_context or {}).get("emotion") or "neutral"),
+            reply_strategy=data.get("reply_strategy") or "先確認事件重點",
+            entities=SemanticEntities(
+                location=entities.get("location", fallback_entities.location),
+                injured=entities.get("injured", fallback_entities.injured),
+                weapon=entities.get("weapon", fallback_entities.weapon),
+                danger_active=entities.get("danger_active", fallback_entities.danger_active),
+            ),
+            semantic=SemanticUnderstanding()
+        )
+    except Exception:
+        return SemanticUnderstanding(
+            intent="未知",
+            primary_need="釐清狀況",
+            emotion=(audio_context or {}).get("emotion") or "neutral",
+            reply_strategy="先確認事件重點",
+            entities=fallback_entities
+        )
+
+
+def apply_semantic_tone(reply: str, semantic: SemanticUnderstanding, risk_level: str) -> str:
+    prefix = ""
+
+    if semantic.emotion in ["panic", "fearful"]:
+        prefix = "我知道你現在很慌，我會先陪你把重點整理清楚。"
+    elif semantic.emotion == "sad":
+        prefix = "我有注意到你現在很難受，我會陪你一步一步整理。"
+    elif semantic.emotion == "angry":
+        prefix = "我知道你現在很激動，我先幫你抓重點。"
+    elif semantic.intent == "情緒支持":
+        prefix = "我在，你可以慢慢說，我會陪你一起整理。"
+
+    if risk_level == "High" and "安全" not in reply:
+        suffix = " 先確認你現在是否安全，如果方便，請立刻告訴我目前位置。"
+    elif semantic.reply_strategy and "安撫" in semantic.reply_strategy and semantic.primary_need:
+        suffix = f" 我會先以{semantic.primary_need}為主。"
+    else:
+        suffix = ""
+
+    return f"{prefix}{reply}{suffix}".strip()
+
+
+def next_question_from_semantic(
+    default_question: str,
+    semantic: SemanticUnderstanding,
+    ex: Extracted,
+    risk_level: str
+) -> str:
+    if risk_level == "High" and not (semantic.entities.location or ex.location):
+        return "你現在人在哪裡？請告訴我地址、明顯地標，或附近路名。"
+
+    if risk_level in ["Medium", "High"] and semantic.entities.injured is None and ex.people_injured is None:
+        return "現場有人受傷、失去意識，或需要立刻送醫嗎？"
+
+    if semantic.intent == "情緒支持":
+        return "你現在身邊有沒有可以陪你的人，或你目前是不是一個人？"
+
+    if semantic.intent == "詢問":
+        return "你最想先知道哪一部分？我可以先直接回答你最急的問題。"
+
+    return default_question
+
+
 # ======================
 # Chat API
 # ======================
@@ -484,11 +740,12 @@ def chat(req: ChatRequest):
                 danger_active=None,
                 dispatch_advice="建議派遣：待確認",
                 description="案件類型：待確認 | 地點：未提供 | 風險等級：Low | 建議派遣：待確認"
-            )
+            ),
+            semantic=SemanticUnderstanding()
         )
 
     try:
-        data = gemini_chat(req.messages)
+        data = gemini_chat_with_audio(req.messages, req.audio_context)
         extracted = data.get("extracted", {}) or {}
 
         ex = Extracted(
@@ -515,9 +772,12 @@ def chat(req: ChatRequest):
 
         summary = generate_incident_summary(ex, risk_level)
         ex.description = summary
+        semantic = semantic_understanding_from_text(context, req.audio_context, ex)
 
         reply = data.get("reply") or "我會一步一步協助你整理資訊。"
         nq = data.get("next_question") or next_question(ex, risk_level)
+        reply = apply_semantic_tone(reply, semantic, risk_level)
+        nq = next_question_from_semantic(nq, semantic, ex, risk_level)
 
         return ChatResponse(
             reply=reply,
@@ -525,17 +785,18 @@ def chat(req: ChatRequest):
             risk_level=risk_level,
             should_escalate=should_escalate,
             next_question=nq,
-            extracted=ex
+            extracted=ex,
+            semantic=semantic
         )
 
     except Exception as e:
-        print("⚠️ Gemini fallback:", str(e))
+        print("Gemini fallback:", str(e))
 
         score, level = simple_risk(context)
         ex = simple_extract(context)
         summary = generate_incident_summary(ex, level)
         ex.description = summary
-
+        semantic = semantic_understanding_from_text(context, req.audio_context, ex)
         if level == "High":
             reply = "我了解你現在很緊張，我會快速協助你整理資訊並引導你進行通報。"
         elif level == "Medium":
@@ -543,13 +804,17 @@ def chat(req: ChatRequest):
         else:
             reply = "我在這裡，我會協助你把事情講清楚。"
 
+        reply = apply_semantic_tone(reply, semantic, level)
+        follow_up = next_question_from_semantic(next_question(ex, level), semantic, ex, level)
+
         return ChatResponse(
             reply=reply,
             risk_score=score,
             risk_level=level,
             should_escalate=(level == "High"),
-            next_question=next_question(ex, level),
-            extracted=ex
+            next_question=follow_up,
+            extracted=ex,
+            semantic=semantic
         )
 
 

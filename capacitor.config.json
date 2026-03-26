@@ -1,0 +1,13 @@
+{
+  "appId": "com.ecare.app",
+  "appName": "E-CARE",
+  "webDir": "www",
+  "server": {
+    "cleartext": true,
+    "allowNavigation": [
+      "192.168.50.254",
+      "localhost",
+      "127.0.0.1"
+    ]
+  }
+}
