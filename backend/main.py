@@ -9,6 +9,8 @@ import os
 import time
 import random
 import json
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import numpy as np
 import librosa
 import joblib
@@ -94,7 +96,50 @@ class ChatResponse(BaseModel):
 # 通報紀錄
 # ======================
 
-REPORTS = []
+DB_CONFIG = {
+    "host": os.getenv("DB_HOST", ""),
+    "port": int(os.getenv("DB_PORT", "5432")),
+    "database": os.getenv("DB_NAME", ""),
+    "user": os.getenv("DB_USER", ""),
+    "password": os.getenv("DB_PASSWORD", ""),
+}
+
+
+def db_config_ready() -> bool:
+    required = ["host", "database", "user", "password"]
+    return all(str(DB_CONFIG.get(key) or "").strip() for key in required)
+
+
+def get_db():
+    if not db_config_ready():
+        raise RuntimeError("資料庫設定不完整，請設定 DB_HOST / DB_NAME / DB_USER / DB_PASSWORD")
+    return psycopg2.connect(**DB_CONFIG)
+
+
+def init_db():
+    if not db_config_ready():
+        print("⚠️ 未設定資料庫連線資訊，/reports 會先停用資料庫功能")
+        return
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS case_records (
+            id          VARCHAR(20) PRIMARY KEY,
+            title       VARCHAR(200),
+            category    VARCHAR(100),
+            location    TEXT,
+            status      VARCHAR(50) DEFAULT '處理中',
+            created_at  VARCHAR(50),
+            risk_level  VARCHAR(20),
+            risk_score  FLOAT,
+            description TEXT
+        );
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("✅ PostgreSQL 已連線")
 
 
 class ReportCreate(BaseModel):
@@ -139,6 +184,8 @@ EMOTION_MODEL = None
 def load_models():
     global WHISPER_MODEL, GEMINI_CLIENT, EMOTION_MODEL
 
+    init_db()
+
     if WHISPER_MODEL is None:
         WHISPER_MODEL = whisper.load_model("base")
 
@@ -158,6 +205,8 @@ def load_models():
 
 
 def call_gemini(contents: str):
+    global GEMINI_CLIENT
+
     if GEMINI_CLIENT is None:
         raise RuntimeError("Gemini client not ready")
 
@@ -181,6 +230,13 @@ def call_gemini(contents: str):
         except Exception as exc:
             last_error = exc
             print(f"Gemini model failed: {model_name} -> {exc}")
+
+    if last_error and any(
+        key in str(last_error).lower()
+        for key in ["api key", "api_key_invalid", "invalid argument", "permission denied", "unauthorized"]
+    ):
+        GEMINI_CLIENT = None
+        print("⚠️ Gemini 驗證失敗，已切換為 fallback 模式")
 
     raise last_error if last_error else RuntimeError("Gemini generate_content failed")
 
@@ -941,7 +997,19 @@ async def audio_to_text(audio: UploadFile = File(...)):
 
 @app.get("/reports", response_model=List[ReportItem])
 def list_reports():
-    return REPORTS[::-1]
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT * FROM case_records ORDER BY created_at DESC LIMIT 200;"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [ReportItem(**dict(row)) for row in rows]
+    except Exception as e:
+        print(f"❌ list_reports 失敗：{e}")
+        raise HTTPException(status_code=500, detail=f"資料庫查詢失敗：{str(e)}")
 
 
 @app.post("/reports", response_model=ReportItem)
@@ -958,8 +1026,32 @@ def create_report(payload: ReportCreate):
         risk_score=payload.risk_score,
         description=payload.description,
     )
-    REPORTS.append(item)
-    return item
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO case_records
+                (id, title, category, location, status, created_at, risk_level, risk_score, description)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                item.id, item.title, item.category, item.location,
+                item.status, item.created_at, item.risk_level,
+                item.risk_score, item.description,
+            )
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"✅ 案件寫入 PostgreSQL：{item.id}")
+        return item
+    except Exception as e:
+        print(f"❌ create_report 失敗：{e}")
+        raise HTTPException(status_code=500, detail=f"資料庫寫入失敗：{str(e)}")
+
+
 
 
 

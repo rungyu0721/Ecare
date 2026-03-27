@@ -10,3 +10,13 @@ android/.gradle/
 android/app/build/
 local.properties
 .idea/
+.vscode/
+.env
+.env.*
+flutter_app/.dart_tool/
+flutter_app/.packages
+flutter_app/build/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.metadata
+flutter_app/.idea/
