@@ -1,21 +1,49 @@
 # E-CARE Flutter App
 
-This directory contains the Flutter client that will replace the old
-Capacitor/Web frontend.
+這個資料夾是 E-CARE 的 Flutter 前端。
 
-## Current scope
+## 目前功能
 
-- Chat UI scaffold
-- FastAPI `/chat` integration
-- Risk banner and high-risk dialog
-- Reports list scaffold via `/reports`
-- Audio recording scaffold and `/audio` upload flow
-- Location service scaffold for dispatch context
+- 首頁
+- 緊急通報流程
+- 聊天頁串接 `/chat`
+- 錄音上傳串接 `/audio`
+- 通報紀錄頁串接 `/reports`
+- 個人資料本地儲存
+- 位置顯示與地址查詢 fallback
 
-## Suggested next steps
+## 執行方式
 
-1. Install Flutter SDK and run `flutter create .` inside this directory.
-2. Merge the generated platform folders with this `lib/` structure.
-3. Run `flutter pub get`.
-4. Replace the English placeholder copy with your final Traditional Chinese UI text.
-5. Add persistent state management if you want multi-page session memory.
+```powershell
+cd C:\Users\User\Documents\Ecare\flutter_app
+flutter pub get
+flutter run -d windows
+```
+
+## 後端需求
+
+Flutter 前端目前預設連到：
+
+```text
+http://127.0.0.1:8000
+```
+
+設定位置：
+
+```text
+lib/src/config/api_config.dart
+```
+
+## 常用指令
+
+```powershell
+flutter pub get
+flutter analyze
+flutter test
+flutter run -d windows
+```
+
+## 補充
+
+- 目前最方便的開發目標是 Windows 桌面版
+- 真正要打包手機版之前，還是要再驗證 Android 的錄音、權限、定位行為
