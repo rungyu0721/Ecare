@@ -13,6 +13,7 @@ local.properties
 .vscode/
 .env
 .env.*
+start_backend.ps1
 flutter_app/.dart_tool/
 flutter_app/.packages
 flutter_app/build/

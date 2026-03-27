@@ -128,6 +128,8 @@ flutter_app/lib/src/config/api_config.dart
 ```powershell
 python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
+資料庫：
+.\start_backend.ps1
 
 Flutter：
 
