@@ -90,7 +90,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      _showSnackBar('\u804a\u5929\u8acb\u6c42\u5931\u6557\uff1a$error');
+      _showSnackBar(
+        ApiService.describeError(
+          error,
+          action: '\u804a\u5929\u8acb\u6c42',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -146,7 +151,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
       _showSnackBar('\u958b\u59cb\u9304\u97f3');
     } catch (error) {
-      _showSnackBar('\u7121\u6cd5\u958b\u59cb\u9304\u97f3\uff1a$error');
+      _showSnackBar('\u7121\u6cd5\u958b\u59cb\u9304\u97f3\uff0c\u8acb\u78ba\u8a8d\u9ea5\u514b\u98a8\u6b0a\u9650\u3002');
     }
   }
 
@@ -186,7 +191,12 @@ class _ChatScreenState extends State<ChatScreen> {
           _isRecording = false;
         });
       }
-      _showSnackBar('\u8a9e\u97f3\u5206\u6790\u5931\u6557\uff1a$error');
+      _showSnackBar(
+        ApiService.describeError(
+          error,
+          action: '\u8a9e\u97f3\u5206\u6790',
+        ),
+      );
     }
   }
 
@@ -214,7 +224,12 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       _showSnackBar('\u5df2\u5efa\u7acb\u901a\u5831\uff1a${report.id}');
     } catch (error) {
-      _showSnackBar('\u5efa\u7acb\u901a\u5831\u5931\u6557\uff1a$error');
+      _showSnackBar(
+        ApiService.describeError(
+          error,
+          action: '\u5efa\u7acb\u901a\u5831',
+        ),
+      );
     }
   }
 

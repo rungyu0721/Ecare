@@ -10,6 +10,7 @@ import time
 import random
 import json
 import psycopg2
+from neo4j import GraphDatabase
 from psycopg2.extras import RealDictCursor
 import numpy as np
 import librosa
@@ -97,30 +98,73 @@ class ChatResponse(BaseModel):
 # ======================
 
 DB_CONFIG = {
-    "host": os.getenv("DB_HOST", ""),
+    "host": os.getenv("DB_HOST", "localhost"),
     "port": int(os.getenv("DB_PORT", "5432")),
-    "database": os.getenv("DB_NAME", ""),
-    "user": os.getenv("DB_USER", ""),
+    "database": os.getenv("DB_NAME", "ecare_db"),
+    "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD", ""),
 }
 
+NEO4J_URI = os.getenv("NEO4J_URI", "")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 
-def db_config_ready() -> bool:
-    required = ["host", "database", "user", "password"]
-    return all(str(DB_CONFIG.get(key) or "").strip() for key in required)
+def get_neo4j():
+    if not NEO4J_URI or not NEO4J_PASSWORD:
+        raise RuntimeError("NEO4J_URI 或 NEO4J_PASSWORD 尚未設定")
+    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
+
+def check_neo4j():
+    driver = None
+    try:
+        driver = get_neo4j()
+        driver.verify_connectivity()
+        with driver.session() as session:
+            session.run("RETURN 1 AS ok").single()
+        print(f"✅ Neo4j 已連線：{NEO4J_URI}")
+    except Exception as e:
+        print(f"⚠️ Neo4j 連線失敗：{e}")
+    finally:
+        if driver is not None:
+            driver.close()
+
+
+def query_neo4j_by_keyword(text: str) -> dict:
+    """用關鍵字查詢 Neo4j，取得事件類型、風險等級、派遣建議"""
+    driver = None
+    try:
+        driver = get_neo4j()
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (k:Keyword)<-[:HAS_KEYWORD]-(e:Event)-[:EVENT_HAS_RISK]->(r:RiskLevel)
+                WHERE k.word IN $words
+                OPTIONAL MATCH (e)-[:NEEDS_ACTION]->(a:Action)
+                RETURN e.code AS code, e.name AS name,
+                       r.level AS risk_level,
+                       collect(DISTINCT a.detail) AS actions
+                ORDER BY r.score_min DESC
+                LIMIT 1
+            """, words=list(text))
+            record = result.single()
+            if record:
+                return {
+                    "event_code": record["code"],
+                    "event_name": record["name"],
+                    "risk_level": record["risk_level"],
+                    "actions":    record["actions"],
+                }
+    except Exception as e:
+        print(f"⚠️ Neo4j 查詢失敗：{e}")
+    finally:
+        if driver is not None:
+            driver.close()
+    return {}
 
 def get_db():
-    if not db_config_ready():
-        raise RuntimeError("資料庫設定不完整，請設定 DB_HOST / DB_NAME / DB_USER / DB_PASSWORD")
     return psycopg2.connect(**DB_CONFIG)
 
-
 def init_db():
-    if not db_config_ready():
-        print("⚠️ 未設定資料庫連線資訊，/reports 會先停用資料庫功能")
-        return
-
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
@@ -184,8 +228,6 @@ EMOTION_MODEL = None
 def load_models():
     global WHISPER_MODEL, GEMINI_CLIENT, EMOTION_MODEL
 
-    init_db()
-
     if WHISPER_MODEL is None:
         WHISPER_MODEL = whisper.load_model("base")
 
@@ -202,11 +244,10 @@ def load_models():
     except Exception as e:
         EMOTION_MODEL = None
         print(f"⚠️ Emotion model 載入失敗：{e}")
-
+    check_neo4j()
+init_db()
 
 def call_gemini(contents: str):
-    global GEMINI_CLIENT
-
     if GEMINI_CLIENT is None:
         raise RuntimeError("Gemini client not ready")
 
@@ -230,13 +271,6 @@ def call_gemini(contents: str):
         except Exception as exc:
             last_error = exc
             print(f"Gemini model failed: {model_name} -> {exc}")
-
-    if last_error and any(
-        key in str(last_error).lower()
-        for key in ["api key", "api_key_invalid", "invalid argument", "permission denied", "unauthorized"]
-    ):
-        GEMINI_CLIENT = None
-        print("⚠️ Gemini 驗證失敗，已切換為 fallback 模式")
 
     raise last_error if last_error else RuntimeError("Gemini generate_content failed")
 
@@ -511,6 +545,7 @@ def gemini_chat(messages: List[ChatMessage]) -> Dict[str, Any]:
         for m in recent
     )
 
+
     prompt = f"""
 你是 E-CARE 緊急事件報案助手。
 
@@ -592,7 +627,17 @@ def gemini_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[
             "extracted": audio_context.get("extracted"),
         }
         audio_context_text = json.dumps(safe_audio_context, ensure_ascii=False)
-
+    # 查詢 Neo4j 知識圖譜
+    neo4j_info = query_neo4j_by_keyword(context)
+    neo4j_hint = ""
+    if neo4j_info:
+        neo4j_hint = f"""
+知識圖譜分析：
+- 偵測事件類型：{neo4j_info.get('event_name', '未知')}
+- 建議風險等級：{neo4j_info.get('risk_level', '未知')}
+- 建議派遣：{', '.join(neo4j_info.get('actions', []))}
+"""
+        
     prompt = f"""
 你是 E-CARE 的緊急關懷助理，要像冷靜、可靠、有同理心的真人助理一樣回應。
 
@@ -643,6 +688,7 @@ risk_level 只能是：
 最新語音分析：
 {audio_context_text}
 
+{neo4j_hint}
 對話內容：
 {context}
 """
@@ -727,14 +773,12 @@ def semantic_understanding_from_text(
 事件抽取：
 {json.dumps(safe_extracted, ensure_ascii=False)}
 """
-
-    resp = call_gemini(prompt)
-
-    result_text = (resp.text or "").strip()
-    if result_text.startswith("```"):
-        result_text = result_text.replace("```json", "").replace("```", "").strip()
-
     try:
+        resp = call_gemini(prompt)
+        result_text = (resp.text or "").strip()
+        if result_text.startswith("```"):
+            result_text = result_text.replace("```json", "").replace("```", "").strip()
+
         data = json.loads(result_text)
         entities = data.get("entities", {}) or {}
         return SemanticUnderstanding(
@@ -747,8 +791,7 @@ def semantic_understanding_from_text(
                 injured=entities.get("injured", fallback_entities.injured),
                 weapon=entities.get("weapon", fallback_entities.weapon),
                 danger_active=entities.get("danger_active", fallback_entities.danger_active),
-            ),
-            semantic=SemanticUnderstanding()
+            )
         )
     except Exception:
         return SemanticUnderstanding(
@@ -1050,7 +1093,6 @@ def create_report(payload: ReportCreate):
     except Exception as e:
         print(f"❌ create_report 失敗：{e}")
         raise HTTPException(status_code=500, detail=f"資料庫寫入失敗：{str(e)}")
-
 
 
 

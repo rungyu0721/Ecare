@@ -111,7 +111,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       setState(() {
         _statusText = '\u7dca\u6025\u901a\u5831\u5931\u6557';
-        _resultText = '\u9001\u51fa\u901a\u5831\u6642\u767c\u751f\u554f\u984c\uff1a$error';
+        _resultText = ApiService.describeError(
+          error,
+          action: '\u9001\u51fa\u901a\u5831',
+        );
       });
     }
   }
@@ -136,7 +139,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       setState(() {
         _statusText = '\u7121\u6cd5\u53d6\u5f97\u4f4d\u7f6e';
-        _resultText = '\u5b9a\u4f4d\u5931\u6557\uff1a$error';
+        _resultText =
+            '\u5b9a\u4f4d\u5931\u6557\uff0c\u8acb\u78ba\u8a8d\u88dd\u7f6e\u5df2\u958b\u555f\u5b9a\u4f4d\u8207\u6b0a\u9650\u3002';
       });
     }
   }

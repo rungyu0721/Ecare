@@ -23,6 +23,55 @@ class ApiService {
 
   final Dio _dio;
 
+  static String describeError(
+    Object error, {
+    String action = '操作',
+  }) {
+    if (error is DioException) {
+      final statusCode = error.response?.statusCode;
+      final detail = _extractDetail(error.response?.data);
+
+      if (detail.contains('資料庫')) {
+        return '$action失敗，目前資料庫暫時無法使用。';
+      }
+
+      if (detail.contains('Whisper') || detail.contains('Emotion model')) {
+        return '$action失敗，分析服務尚未準備完成。';
+      }
+
+      if (statusCode == null) {
+        return '$action失敗，現在無法連線到伺服器。';
+      }
+
+      if (statusCode >= 500) {
+        return '$action失敗，伺服器暫時忙碌，請稍後再試。';
+      }
+
+      if (statusCode == 404) {
+        return '$action失敗，找不到對應的服務。';
+      }
+
+      if (statusCode == 400) {
+        return '$action失敗，送出的資料格式不正確。';
+      }
+    }
+
+    return '$action失敗，請稍後再試。';
+  }
+
+  static String _extractDetail(dynamic data) {
+    if (data is Map<String, dynamic>) {
+      final detail = data['detail'];
+      if (detail is String) {
+        return detail;
+      }
+    }
+    if (data is String) {
+      return data;
+    }
+    return '';
+  }
+
   Future<ChatResponse> sendChat({
     required List<ChatMessage> messages,
     Map<String, dynamic>? audioContext,
