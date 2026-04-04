@@ -421,7 +421,7 @@ def simple_extract(text: str) -> Extracted:
         ex.category = "可疑人士"
     elif any(k in text for k in ["噪音", "很吵", "吵鬧", "施工", "喧嘩"]):
         ex.category = "噪音"
-    elif any(k in text for k in ["昏倒", "流血", "受傷", "沒呼吸", "抽搐", "心臟痛"]):
+    elif any(k in text for k in ["昏倒", "流血", "受傷", "沒呼吸", "抽搐", "心臟痛", "頭暈", "胸痛", "呼吸困難", "喘不過氣", "不舒服", "發燒", "嘔吐"]):
         ex.category = "醫療急症"
     elif any(k in text for k in ["打架", "刀", "砍", "威脅", "家暴", "被打"]):
         ex.category = "暴力事件"
@@ -430,7 +430,7 @@ def simple_extract(text: str) -> Extracted:
     else:
         ex.category = "待確認"
 
-    if any(k in text for k in ["流血", "受傷", "昏倒", "沒呼吸", "抽搐", "骨折"]):
+    if any(k in text for k in ["流血", "受傷", "昏倒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "呼吸困難", "喘不過氣", "嘔吐"]):
         ex.people_injured = True
     else:
         ex.people_injured = None
@@ -453,6 +453,230 @@ def simple_extract(text: str) -> Extracted:
 
     ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
     return ex
+
+
+def merge_extracted(base: Extracted, incoming: Extracted) -> Extracted:
+    if incoming.category and incoming.category != "待確認":
+        base.category = incoming.category
+    elif not base.category:
+        base.category = incoming.category
+
+    if incoming.location:
+        base.location = incoming.location
+    if incoming.people_injured is not None:
+        base.people_injured = incoming.people_injured
+    if incoming.weapon is not None:
+        base.weapon = incoming.weapon
+    if incoming.danger_active is not None:
+        base.danger_active = incoming.danger_active
+    if incoming.description:
+        base.description = incoming.description
+
+    base.dispatch_advice = get_dispatch_advice(base.category, base.weapon, base.people_injured)
+    return base
+
+
+def apply_turn_context(messages: List[ChatMessage], ex: Extracted) -> Extracted:
+    last_user_index = None
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].role == "user":
+            last_user_index = index
+            break
+
+    if last_user_index is None:
+        return ex
+
+    latest_user_text = messages[last_user_index].content.strip()
+    previous_assistant_text = ""
+
+    for index in range(last_user_index - 1, -1, -1):
+        if messages[index].role == "assistant":
+            previous_assistant_text = messages[index].content.strip()
+            break
+
+    normalized_location = latest_user_text
+    for prefix in ["在", "於", "我在", "目前在", "現在在", "人 在"]:
+        if normalized_location.startswith(prefix) and len(normalized_location) > len(prefix):
+            normalized_location = normalized_location[len(prefix):].strip()
+            break
+
+    if (
+        not ex.location
+        and latest_user_text
+        and len(latest_user_text) <= 20
+        and any(keyword in previous_assistant_text for keyword in ["地點", "地址", "哪裡", "位置"])
+    ):
+        ex.location = normalized_location or latest_user_text
+
+    if ex.category == "待確認" and latest_user_text:
+        category_map = {
+            "火災": "火災",
+            "失火": "火災",
+            "可疑人士": "可疑人士",
+            "可疑": "可疑人士",
+            "噪音": "噪音",
+            "醫療": "醫療急症",
+            "急症": "醫療急症",
+            "暴力": "暴力事件",
+            "打架": "暴力事件",
+            "車禍": "交通事故",
+            "交通事故": "交通事故",
+        }
+        mapped = category_map.get(latest_user_text)
+        if mapped:
+            ex.category = mapped
+
+    if not ex.dispatch_advice:
+        ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+
+    return ex
+
+
+def extract_conversation_state(messages: List[ChatMessage]) -> Extracted:
+    merged = Extracted(
+        category="待確認",
+        location=None,
+        people_injured=None,
+        weapon=None,
+        danger_active=None,
+        dispatch_advice="建議派遣：待確認",
+        description=None,
+    )
+
+    for index, message in enumerate(messages):
+        if message.role != "user":
+            continue
+        turn_extracted = simple_extract(message.content)
+        turn_extracted = apply_turn_context(messages[: index + 1], turn_extracted)
+        merged = merge_extracted(merged, turn_extracted)
+
+    return merged
+
+
+def get_last_turn_context(messages: List[ChatMessage]) -> tuple[str, str]:
+    last_user_index = None
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].role == "user":
+            last_user_index = index
+            break
+
+    if last_user_index is None:
+        return "", ""
+
+    latest_user_text = messages[last_user_index].content.strip()
+    previous_assistant_text = ""
+
+    for index in range(last_user_index - 1, -1, -1):
+        if messages[index].role == "assistant":
+            previous_assistant_text = messages[index].content.strip()
+            break
+
+    return latest_user_text, previous_assistant_text
+
+
+def contextualize_reply_and_question(
+    messages: List[ChatMessage],
+    ex: Extracted,
+    reply: str,
+    next_q: str,
+    risk_level: str,
+) -> tuple[str, str]:
+    latest_user_text, previous_assistant_text = get_last_turn_context(messages)
+    latest_user_text = latest_user_text.strip()
+    previous_assistant_text = previous_assistant_text.strip()
+
+    def contains_any(text: str, keywords: List[str]) -> bool:
+        return any(keyword in text for keyword in keywords)
+
+    def is_yes(text: str) -> bool:
+        normalized = text.replace("！", "").replace("!", "").strip().lower()
+        return normalized in ["有", "是", "對", "會", "需要", "有的", "有喔", "有啊", "對啊", "對喔", "嗯", "恩", "要"]
+
+    def is_no(text: str) -> bool:
+        normalized = text.replace("！", "").replace("!", "").strip().lower()
+        return normalized in ["沒有", "沒", "不是", "不會", "不用", "沒有喔", "沒有啊", "沒有呢"]
+
+    def normalize_location_text(text: str) -> str:
+        normalized = text.strip()
+        for prefix in ["我在", "目前在", "現在在", "在", "於"]:
+            if normalized.startswith(prefix) and len(normalized) > len(prefix):
+                return normalized[len(prefix):].strip()
+        return normalized
+
+    normalized_user_location = normalize_location_text(latest_user_text)
+
+    if (
+        ex.location
+        and latest_user_text
+        and normalized_user_location == ex.location
+        and contains_any(previous_assistant_text, ["地點", "地址", "哪裡", "位置"])
+    ):
+        reply = f"收到，地點是在{ex.location}。"
+        if ex.category == "待確認":
+            next_q = "那現場現在是發生了什麼事？像是火災、衝突、車禍，還是有人身體不舒服？"
+        elif ex.people_injured is None and ex.category in ["醫療急症", "暴力事件", "交通事故", "火災"]:
+            next_q = "現場有人受傷、失去意識，或需要立刻送醫嗎？"
+        elif risk_level in ["Medium", "High"] and ex.danger_active is None:
+            next_q = "目前危險還在持續嗎？對方或事件還在現場嗎？"
+        else:
+            next_q = "你可以再描述一下現場現在的狀況，我幫你整理。"
+
+    elif (
+        ex.category
+        and ex.category != "待確認"
+        and latest_user_text
+        and contains_any(previous_assistant_text, ["火災", "可疑人士", "噪音", "醫療急症", "暴力事件", "交通事故"])
+    ):
+        reply = f"了解，這看起來是{ex.category}。"
+        if not ex.location:
+            next_q = "請問事發地點在哪裡？"
+        elif ex.people_injured is None and ex.category in ["醫療急症", "暴力事件", "交通事故", "火災"]:
+            next_q = "現場有人受傷、失去意識，或需要醫療協助嗎？"
+        else:
+            next_q = "目前現場最緊急的狀況是什麼？你可以再補充一下。"
+
+    elif contains_any(previous_assistant_text, ["受傷", "失去意識", "送醫", "醫療協助"]):
+        if is_yes(latest_user_text):
+            ex.people_injured = True
+            ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+            reply = "收到，現場有人受傷，我會優先以需要醫療協助的情況來處理。"
+            if risk_level in ["Medium", "High"] and ex.danger_active is None:
+                next_q = "目前危險還在持續嗎？例如火勢、衝突，或肇事者還在現場嗎？"
+            else:
+                next_q = "請再告訴我現場目前最危急的狀況，我幫你整理成通報內容。"
+        elif is_no(latest_user_text):
+            ex.people_injured = False
+            ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+            reply = "了解，目前沒有明確提到有人受傷。"
+            if ex.category == "暴力事件" and ex.weapon is None:
+                next_q = "現場對方有持刀、棍棒或其他武器嗎？"
+            elif risk_level in ["Medium", "High"] and ex.danger_active is None:
+                next_q = "目前危險還在持續嗎？對方或事件還在現場嗎？"
+
+    elif contains_any(previous_assistant_text, ["武器", "持刀", "棍棒", "槍"]):
+        if is_yes(latest_user_text):
+            ex.weapon = True
+            ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+            reply = "收到，現場可能有武器，風險會比較高。"
+            next_q = "現在對方或危險因素還在現場嗎？請先確認你自己是否安全。"
+        elif is_no(latest_user_text):
+            ex.weapon = False
+            ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+            reply = "了解，目前沒有提到武器。"
+            if risk_level in ["Medium", "High"] and ex.danger_active is None:
+                next_q = "目前危險還在持續嗎？對方或事件還在現場嗎？"
+
+    elif contains_any(previous_assistant_text, ["還在持續", "還在現場", "是否安全", "危險還在"]):
+        if is_yes(latest_user_text):
+            ex.danger_active = True
+            reply = "收到，危險目前還在持續。你先以自身安全為優先，盡量移動到安全的位置。"
+            next_q = "如果方便，請再補充現場有幾個人、目前最危急的是什麼，我會幫你整理成通報重點。"
+        elif is_no(latest_user_text):
+            ex.danger_active = False
+            reply = "了解，目前危險看起來沒有持續擴大。"
+            next_q = "請再補充一下現場的狀況，我會幫你整理後續通報內容。"
+
+    return reply, next_q
 
 
 # ======================
@@ -610,6 +834,7 @@ def gemini_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[
         raise RuntimeError("Gemini client not ready")
 
     recent = messages[-10:]
+    conversation_state = extract_conversation_state(messages)
     context = "\n".join(
         f"{'使用者' if m.role == 'user' else '助理'}：{m.content}"
         for m in recent
@@ -637,6 +862,18 @@ def gemini_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[
 - 建議風險等級：{neo4j_info.get('risk_level', '未知')}
 - 建議派遣：{', '.join(neo4j_info.get('actions', []))}
 """
+
+    known_context = json.dumps(
+        {
+            "category": conversation_state.category,
+            "location": conversation_state.location,
+            "people_injured": conversation_state.people_injured,
+            "weapon": conversation_state.weapon,
+            "danger_active": conversation_state.danger_active,
+            "dispatch_advice": conversation_state.dispatch_advice,
+        },
+        ensure_ascii=False
+    )
         
     prompt = f"""
 你是 E-CARE 的緊急關懷助理，要像冷靜、可靠、有同理心的真人助理一樣回應。
@@ -645,6 +882,8 @@ def gemini_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[
 - 先簡短接住使用者情緒，再提供實際協助
 - 若資訊不足，一次只追問一個最重要的問題
 - 如果風險高，優先確認安全、位置、是否有人受傷
+- 請延續前面的對話，不要重複已經問過且已經得到答案的問題
+- 如果使用者剛剛只回答短句，例如地點、症狀、是否受傷，請把它視為對上一題的回答
 - reply 一律使用繁體中文，自然口語，不要寫得像表單或系統訊息
 - 只能輸出 JSON，不要加註解或 markdown
 
@@ -687,6 +926,9 @@ risk_level 只能是：
 
 最新語音分析：
 {audio_context_text}
+
+目前已整理出的案件資訊：
+{known_context}
 
 {neo4j_hint}
 對話內容：
@@ -855,6 +1097,7 @@ def chat(req: ChatRequest):
     context = " ".join(
         m.content for m in req.messages if m.role == "user"
     ).strip()
+    conversation_state = extract_conversation_state(req.messages)
 
     if not context:
         return ChatResponse(
@@ -888,6 +1131,8 @@ def chat(req: ChatRequest):
             dispatch_advice=extracted.get("dispatch_advice"),
             description=extracted.get("description"),
         )
+        ex = apply_turn_context(req.messages, ex)
+        ex = merge_extracted(conversation_state, ex)
 
         risk_score = float(data.get("risk_score", 0.2))
         risk_score = max(0.0, min(1.0, risk_score))
@@ -907,6 +1152,7 @@ def chat(req: ChatRequest):
 
         reply = data.get("reply") or "我會一步一步協助你整理資訊。"
         nq = data.get("next_question") or next_question(ex, risk_level)
+        reply, nq = contextualize_reply_and_question(req.messages, ex, reply, nq, risk_level)
         reply = apply_semantic_tone(reply, semantic, risk_level)
         nq = next_question_from_semantic(nq, semantic, ex, risk_level)
 
@@ -925,6 +1171,8 @@ def chat(req: ChatRequest):
 
         score, level = simple_risk(context)
         ex = simple_extract(context)
+        ex = apply_turn_context(req.messages, ex)
+        ex = merge_extracted(conversation_state, ex)
         summary = generate_incident_summary(ex, level)
         ex.description = summary
         semantic = semantic_understanding_from_text(context, req.audio_context, ex)
@@ -937,6 +1185,7 @@ def chat(req: ChatRequest):
 
         reply = apply_semantic_tone(reply, semantic, level)
         follow_up = next_question_from_semantic(next_question(ex, level), semantic, ex, level)
+        reply, follow_up = contextualize_reply_and_question(req.messages, ex, reply, follow_up, level)
 
         return ChatResponse(
             reply=reply,

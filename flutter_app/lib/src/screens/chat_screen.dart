@@ -75,9 +75,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
       setState(() {
         _latestResponse = response;
-        _history.add(ChatMessage(role: 'assistant', content: response.reply));
+        _appendAssistantMessage(response.reply);
         if ((response.nextQuestion ?? '').isNotEmpty) {
-          _history.add(ChatMessage(role: 'assistant', content: response.nextQuestion!));
+          _appendAssistantMessage(response.nextQuestion!);
         }
       });
 
@@ -103,6 +103,26 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     }
+  }
+
+  void _appendAssistantMessage(String content) {
+    final text = content.trim();
+    if (text.isEmpty) {
+      return;
+    }
+
+    for (int index = _history.length - 1; index >= 0; index--) {
+      final message = _history[index];
+      if (message.role != 'assistant') {
+        continue;
+      }
+      if (message.content.trim() == text) {
+        return;
+      }
+      break;
+    }
+
+    _history.add(ChatMessage(role: 'assistant', content: text));
   }
 
   Future<void> _openRecords() async {
