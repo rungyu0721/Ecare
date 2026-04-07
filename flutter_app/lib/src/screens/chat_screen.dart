@@ -65,9 +65,21 @@ class _ChatScreenState extends State<ChatScreen> {
     await _tryFetchLocation();
 
     try {
+      final audioContext = <String, dynamic>{
+        ...?audio?.toAudioContext(),
+        if (_currentLocation != null)
+          'client_location': <String, dynamic>{
+            'latitude': _currentLocation!.latitude,
+            'longitude': _currentLocation!.longitude,
+            'accuracy': _currentLocation!.accuracy,
+            'address': _currentLocation!.address,
+            'display_text': _currentLocation!.toDisplayText(),
+          },
+      };
+
       final response = await _apiService.sendChat(
         messages: _history,
-        audioContext: audio?.toAudioContext(),
+        audioContext: audioContext.isEmpty ? null : audioContext,
       );
       if (!mounted) {
         return;
@@ -76,7 +88,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _latestResponse = response;
         _appendAssistantMessage(response.reply);
-        if ((response.nextQuestion ?? '').isNotEmpty) {
+        if (_shouldAppendNextQuestion(response.reply, response.nextQuestion)) {
           _appendAssistantMessage(response.nextQuestion!);
         }
       });
@@ -123,6 +135,47 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     _history.add(ChatMessage(role: 'assistant', content: text));
+  }
+
+  bool _shouldAppendNextQuestion(String reply, String? nextQuestion) {
+    final next = nextQuestion?.trim() ?? '';
+    if (next.isEmpty) {
+      return false;
+    }
+
+    final normalizedReply = _normalizeComparableText(reply);
+    final normalizedNext = _normalizeComparableText(next);
+
+    if (normalizedNext.isEmpty) {
+      return false;
+    }
+
+    if (normalizedReply == normalizedNext) {
+      return false;
+    }
+
+    if (normalizedReply.contains(normalizedNext) ||
+        normalizedNext.contains(normalizedReply)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  String _normalizeComparableText(String text) {
+    return text
+        .replaceAll(RegExp(r'\s+'), '')
+        .replaceAll(RegExp(r'[，。！？；：「」、『』（）()\-]'), '')
+        .replaceAll('請問', '')
+        .replaceAll('請告訴我', '')
+        .replaceAll('告訴我', '')
+        .replaceAll('可以先告訴我', '')
+        .replaceAll('目前', '')
+        .replaceAll('現在', '')
+        .replaceAll('您', '')
+        .replaceAll('你', '')
+        .replaceAll('是否', '')
+        .trim();
   }
 
   Future<void> _openRecords() async {
@@ -228,7 +281,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final extracted = latest.extracted;
-    final locationText = extracted.location ?? _currentLocation?.toDisplayText() ?? '\u672a\u63d0\u4f9b\u4f4d\u7f6e';
+    final locationText = _preferredLocationText(extracted.location);
 
     try {
       final report = await _apiService.createReport(
@@ -253,10 +306,34 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  String _preferredLocationText(String? extractedLocation) {
+    final normalized = extractedLocation?.trim() ?? '';
+    const vagueLocations = <String>{
+      '',
+      '\u6211\u65c1\u908a',
+      '\u65c1\u908a',
+      '\u9019\u88e1',
+      '\u9019\u908a',
+      '\u9644\u8fd1',
+      '\u73fe\u5834',
+      '\u6211\u9019\u88e1',
+      '\u6211\u9019\u908a',
+      '\u90a3\u88e1',
+      '\u90a3\u908a',
+    };
+
+    if (!vagueLocations.contains(normalized)) {
+      return normalized;
+    }
+
+    return _currentLocation?.toDisplayText() ?? '\u5c1a\u672a\u53d6\u5f97\u4f4d\u7f6e';
+  }
+
   void _showEscalationDialog(ChatResponse response) {
     showDialog<void>(
       context: context,
       builder: (BuildContext context) {
+        final locationText = _preferredLocationText(response.extracted.location);
         return Dialog(
           backgroundColor: Colors.transparent,
           child: Container(
@@ -282,7 +359,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 Text(
                   [
                     '\u7cfb\u7d71\u5224\u65b7\u76ee\u524d\u60c5\u6cc1\u9700\u8981\u512a\u5148\u8655\u7406\u3002',
-                    '\u4f4d\u7f6e\uff1a${response.extracted.location ?? '\u5c1a\u672a\u53d6\u5f97\u4f4d\u7f6e'}',
+                    '\u4f4d\u7f6e\uff1a$locationText',
                     response.extracted.dispatchAdvice ??
                         '\u5efa\u8b70\u76e1\u5feb\u806f\u7e6b\u5bb6\u4eba\u3001\u5b78\u6821\u6216\u64a5\u6253\u7dca\u6025\u96fb\u8a71\u3002',
                   ].join('\n'),
