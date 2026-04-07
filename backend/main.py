@@ -9,6 +9,8 @@ import os
 import time
 import random
 import json
+import urllib.error
+import urllib.request
 import psycopg2
 from neo4j import GraphDatabase
 from psycopg2.extras import RealDictCursor
@@ -16,7 +18,7 @@ import numpy as np
 import librosa
 import joblib
 
-# Gemini
+# LLM providers
 from google import genai
 
 app = FastAPI()
@@ -108,6 +110,7 @@ DB_CONFIG = {
 NEO4J_URI = os.getenv("NEO4J_URI", "")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
+DB_AVAILABLE = False
 
 def get_neo4j():
     if not NEO4J_URI or not NEO4J_PASSWORD:
@@ -165,25 +168,41 @@ def get_db():
     return psycopg2.connect(**DB_CONFIG)
 
 def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS case_records (
-            id          VARCHAR(20) PRIMARY KEY,
-            title       VARCHAR(200),
-            category    VARCHAR(100),
-            location    TEXT,
-            status      VARCHAR(50) DEFAULT '處理中',
-            created_at  VARCHAR(50),
-            risk_level  VARCHAR(20),
-            risk_score  FLOAT,
-            description TEXT
-        );
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
-    print("✅ PostgreSQL 已連線")
+    global DB_AVAILABLE
+    conn = None
+    cur = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS case_records (
+                id          VARCHAR(20) PRIMARY KEY,
+                title       VARCHAR(200),
+                category    VARCHAR(100),
+                location    TEXT,
+                status      VARCHAR(50) DEFAULT '處理中',
+                created_at  VARCHAR(50),
+                risk_level  VARCHAR(20),
+                risk_score  FLOAT,
+                description TEXT
+            );
+        """)
+        conn.commit()
+        DB_AVAILABLE = True
+        print("✅ PostgreSQL 已連線")
+    except Exception as e:
+        DB_AVAILABLE = False
+        print(f"⚠️ PostgreSQL 連線失敗，/reports 將暫時不可用：{e}")
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+def ensure_db_available():
+    if not DB_AVAILABLE:
+        raise HTTPException(status_code=503, detail="資料庫目前不可用，請稍後再試")
 
 
 class ReportCreate(BaseModel):
@@ -221,8 +240,28 @@ def make_id(prefix="A"):
 
 WHISPER_MODEL = None
 GEMINI_CLIENT = None
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+LLM_MODEL_NAME = os.getenv(
+    "LLM_MODEL",
+    os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+)
+GEMMA_BASE_URL = os.getenv("GEMMA_BASE_URL", "").strip()
+GEMMA_API_KEY = os.getenv("GEMMA_API_KEY", "").strip()
+GEMMA_CHAT_PATH = os.getenv("GEMMA_CHAT_PATH", "").strip()
 EMOTION_MODEL = None
+
+
+class LLMTextResponse:
+    def __init__(self, text: str):
+        self.text = text
+
+
+def llm_is_ready() -> bool:
+    if LLM_PROVIDER == "gemini":
+        return GEMINI_CLIENT is not None
+    if LLM_PROVIDER == "gemma":
+        return bool(GEMMA_BASE_URL and LLM_MODEL_NAME)
+    return False
 
 @app.on_event("startup")
 def load_models():
@@ -231,12 +270,20 @@ def load_models():
     if WHISPER_MODEL is None:
         WHISPER_MODEL = whisper.load_model("base")
 
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("google_api_key")
-    if api_key:
-        GEMINI_CLIENT = genai.Client(api_key=api_key)
-        print("✅ Gemini 已初始化")
+    if LLM_PROVIDER == "gemini":
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("google_api_key")
+        if api_key:
+            GEMINI_CLIENT = genai.Client(api_key=api_key)
+            print(f"✅ LLM 已初始化：Gemini ({LLM_MODEL_NAME})")
+        else:
+            print("⚠️ 找不到 GOOGLE_API_KEY，/chat 將使用 fallback")
+    elif LLM_PROVIDER == "gemma":
+        if GEMMA_BASE_URL and LLM_MODEL_NAME:
+            print(f"✅ LLM 已設定：Gemma ({LLM_MODEL_NAME}) @ {GEMMA_BASE_URL}")
+        else:
+            print("⚠️ Gemma provider 未完整設定，/chat 將使用 fallback")
     else:
-        print("⚠️ 找不到 GOOGLE_API_KEY，/chat 將使用 fallback")
+        print(f"⚠️ 不支援的 LLM_PROVIDER={LLM_PROVIDER}，/chat 將使用 fallback")
 
     try:
         EMOTION_MODEL = joblib.load("backend/emotion_model.pkl")
@@ -253,7 +300,7 @@ def call_gemini(contents: str):
 
     fallback_models = []
     for model_name in [
-        GEMINI_MODEL_NAME,
+        LLM_MODEL_NAME,
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
@@ -273,6 +320,77 @@ def call_gemini(contents: str):
             print(f"Gemini model failed: {model_name} -> {exc}")
 
     raise last_error if last_error else RuntimeError("Gemini generate_content failed")
+
+
+def call_gemma(contents: str):
+    if not GEMMA_BASE_URL or not LLM_MODEL_NAME:
+        raise RuntimeError("Gemma provider not configured")
+
+    base_url = GEMMA_BASE_URL.rstrip("/")
+    if GEMMA_CHAT_PATH:
+        path = GEMMA_CHAT_PATH if GEMMA_CHAT_PATH.startswith("/") else f"/{GEMMA_CHAT_PATH}"
+    elif base_url.endswith("/v1"):
+        path = "/chat/completions"
+    else:
+        path = "/v1/chat/completions"
+
+    endpoint = f"{base_url}{path}"
+    payload = {
+        "model": LLM_MODEL_NAME,
+        "messages": [
+            {
+                "role": "user",
+                "content": contents,
+            }
+        ],
+        "temperature": 0.3,
+    }
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            **(
+                {"Authorization": f"Bearer {GEMMA_API_KEY}"}
+                if GEMMA_API_KEY
+                else {}
+            ),
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"Gemma HTTP error: {exc.code} {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Gemma connection failed: {exc}") from exc
+
+    try:
+        text = body["choices"][0]["message"]["content"]
+        if isinstance(text, list):
+            text = "".join(
+                part.get("text", "")
+                for part in text
+                if isinstance(part, dict)
+            )
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"Gemma response format not recognized: {body}") from exc
+
+    if not isinstance(text, str):
+        raise RuntimeError(f"Gemma content format not recognized: {body}")
+
+    return LLMTextResponse(text=text)
+
+
+def call_llm(contents: str):
+    if LLM_PROVIDER == "gemini":
+        return call_gemini(contents)
+    if LLM_PROVIDER == "gemma":
+        return call_gemma(contents)
+    raise RuntimeError(f"Unsupported LLM provider: {LLM_PROVIDER}")
 
 def extract_emotion_features(wav_path: str) -> np.ndarray:
     y, sr = librosa.load(wav_path, sr=16000, mono=True)
@@ -412,6 +530,71 @@ def get_dispatch_advice(category: Optional[str], weapon: Optional[bool], people_
 # 簡易事件抽取
 # ======================
 
+VAGUE_LOCATION_PHRASES = {
+    "我旁邊",
+    "旁邊",
+    "這裡",
+    "那裡",
+    "附近",
+    "現場",
+    "我這裡",
+    "我這邊",
+    "這邊",
+    "那邊",
+    "身邊",
+}
+
+
+def normalize_location_candidate(text: str) -> Optional[str]:
+    candidate = text.strip(" ：:，,。.？?！!；;、\n\t")
+    if not candidate:
+        return None
+
+    for prefix in ["我在", "目前在", "現在在", "人在", "在", "於"]:
+        if candidate.startswith(prefix) and len(candidate) > len(prefix):
+            candidate = candidate[len(prefix):].strip(" ：:，,。.？?！!；;、\n\t")
+            break
+
+    if not candidate:
+        return None
+
+    if candidate in VAGUE_LOCATION_PHRASES:
+        return None
+
+    if any(
+        candidate.startswith(prefix)
+        for prefix in ["我旁邊", "旁邊", "附近", "這裡", "那裡", "現場"]
+    ):
+        return None
+
+    return candidate
+
+
+def get_client_location_text(audio_context: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not audio_context:
+        return None
+
+    client_location = audio_context.get("client_location")
+    if not isinstance(client_location, dict):
+        return None
+
+    for key in ["address", "display_text"]:
+        value = client_location.get(key)
+        if isinstance(value, str):
+            normalized = normalize_location_candidate(value)
+            if normalized:
+                return normalized
+
+    latitude = client_location.get("latitude")
+    longitude = client_location.get("longitude")
+    accuracy = client_location.get("accuracy")
+    if isinstance(latitude, (int, float)) and isinstance(longitude, (int, float)):
+        if isinstance(accuracy, (int, float)):
+            return f"{latitude:.6f}, {longitude:.6f} (+/- {round(accuracy)}m)"
+        return f"{latitude:.6f}, {longitude:.6f}"
+
+    return None
+
 def simple_extract(text: str) -> Extracted:
     ex = Extracted(description=text)
 
@@ -448,8 +631,10 @@ def simple_extract(text: str) -> Extracted:
     for key in ["在", "位於", "地址", "地點是"]:
         if key in text:
             idx = text.find(key) + len(key)
-            ex.location = text[idx: idx + 25].strip(" ：:，,。. ")
-            break
+            candidate = normalize_location_candidate(text[idx: idx + 25])
+            if candidate:
+                ex.location = candidate
+                break
 
     ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
     return ex
@@ -494,19 +679,16 @@ def apply_turn_context(messages: List[ChatMessage], ex: Extracted) -> Extracted:
             previous_assistant_text = messages[index].content.strip()
             break
 
-    normalized_location = latest_user_text
-    for prefix in ["在", "於", "我在", "目前在", "現在在", "人 在"]:
-        if normalized_location.startswith(prefix) and len(normalized_location) > len(prefix):
-            normalized_location = normalized_location[len(prefix):].strip()
-            break
+    normalized_location = normalize_location_candidate(latest_user_text)
 
     if (
         not ex.location
         and latest_user_text
         and len(latest_user_text) <= 20
         and any(keyword in previous_assistant_text for keyword in ["地點", "地址", "哪裡", "位置"])
+        and normalized_location
     ):
-        ex.location = normalized_location or latest_user_text
+        ex.location = normalized_location
 
     if ex.category == "待確認" and latest_user_text:
         category_map = {
@@ -597,11 +779,7 @@ def contextualize_reply_and_question(
         return normalized in ["沒有", "沒", "不是", "不會", "不用", "沒有喔", "沒有啊", "沒有呢"]
 
     def normalize_location_text(text: str) -> str:
-        normalized = text.strip()
-        for prefix in ["我在", "目前在", "現在在", "在", "於"]:
-            if normalized.startswith(prefix) and len(normalized) > len(prefix):
-                return normalized[len(prefix):].strip()
-        return normalized
+        return normalize_location_candidate(text) or text.strip()
 
     normalized_user_location = normalize_location_text(latest_user_text)
 
@@ -756,12 +934,12 @@ def generate_incident_summary(ex: Extracted, risk_level: str) -> str:
 
 
 # ======================
-# Gemini 分析
+# LLM 分析
 # ======================
 
-def gemini_chat(messages: List[ChatMessage]) -> Dict[str, Any]:
-    if GEMINI_CLIENT is None:
-        raise RuntimeError("Gemini 未初始化")
+def llm_chat(messages: List[ChatMessage]) -> Dict[str, Any]:
+    if not llm_is_ready():
+        raise RuntimeError("LLM 未初始化")
 
     recent = messages[-10:]
     context = "\n".join(
@@ -771,11 +949,19 @@ def gemini_chat(messages: List[ChatMessage]) -> Dict[str, Any]:
 
 
     prompt = f"""
-你是 E-CARE 緊急事件報案助手。
+你是 E-CARE 緊急事件關懷助理。你的風格要冷靜、穩定、有同理心，像受過訓練的真人接線助理。
 
-請根據以下對話，輸出嚴格 JSON，不要加入其他文字。
+請根據以下對話輸出嚴格 JSON，不要加入其他文字。
 請使用繁體中文。
 如果資訊不確定請填 null，不要自行猜測。
+
+回覆原則：
+- 先用 1 句自然口語接住對方情緒，再進入重點
+- 不要機械重述使用者原句，不要出現像「你在你旁邊」這種不自然說法
+- 一次只問 1 個最重要的問題
+- 如果 reply 已經包含完整提問，next_question 請輸出空字串
+- 不要把「我旁邊、這裡、附近、現場」當成明確位置
+- reply 要短，像真人說話，不要像表單
 
 category 只能從以下擇一：
 - 火災
@@ -818,7 +1004,7 @@ JSON 格式如下：
 {context}
 """
 
-    resp = call_gemini(prompt)
+    resp = call_llm(prompt)
 
     text = (resp.text or "").strip()
 
@@ -829,12 +1015,20 @@ JSON 格式如下：
     return data
 
 
-def gemini_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    if GEMINI_CLIENT is None:
-        raise RuntimeError("Gemini client not ready")
+def llm_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not llm_is_ready():
+        raise RuntimeError("LLM client not ready")
 
     recent = messages[-10:]
     conversation_state = extract_conversation_state(messages)
+    client_location_text = get_client_location_text(audio_context)
+    if client_location_text and not conversation_state.location:
+        conversation_state.location = client_location_text
+        conversation_state.dispatch_advice = get_dispatch_advice(
+            conversation_state.category,
+            conversation_state.weapon,
+            conversation_state.people_injured,
+        )
     context = "\n".join(
         f"{'使用者' if m.role == 'user' else '助理'}：{m.content}"
         for m in recent
@@ -850,6 +1044,7 @@ def gemini_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[
             "risk_level": audio_context.get("risk_level"),
             "risk_score": audio_context.get("risk_score"),
             "extracted": audio_context.get("extracted"),
+            "client_location": audio_context.get("client_location"),
         }
         audio_context_text = json.dumps(safe_audio_context, ensure_ascii=False)
     # 查詢 Neo4j 知識圖譜
@@ -879,12 +1074,15 @@ def gemini_chat_with_audio(messages: List[ChatMessage], audio_context: Optional[
 你是 E-CARE 的緊急關懷助理，要像冷靜、可靠、有同理心的真人助理一樣回應。
 
 回覆原則：
-- 先簡短接住使用者情緒，再提供實際協助
-- 若資訊不足，一次只追問一個最重要的問題
+- 先用 1 句短短安撫或接住情緒的話，再進入協助
+- 若資訊不足，一次只追問 1 個最重要的問題
 - 如果風險高，優先確認安全、位置、是否有人受傷
 - 請延續前面的對話，不要重複已經問過且已經得到答案的問題
 - 如果使用者剛剛只回答短句，例如地點、症狀、是否受傷，請把它視為對上一題的回答
 - reply 一律使用繁體中文，自然口語，不要寫得像表單或系統訊息
+- 不要機械重述使用者的句子，避免不自然的語句
+- 不要把「我旁邊、這裡、附近、現場」當成明確位置
+- 如果 reply 已經是一句完整的提問，next_question 請輸出空字串
 - 只能輸出 JSON，不要加註解或 markdown
 
 category 只能是：
@@ -903,7 +1101,7 @@ risk_level 只能是：
 
 輸出格式：
 {{
-  "reply": "string",
+ "reply": "string",
   "risk_score": 0.0,
   "risk_level": "Low",
   "should_escalate": false,
@@ -916,8 +1114,15 @@ risk_level 只能是：
     "danger_active": true,
     "dispatch_advice": "string|null",
     "description": "string|null"
-  }}
+ }}
 }}
+
+風格要求：
+- reply 長度盡量控制在 1 到 2 句
+- 優先用「我知道你現在很慌／我先陪你整理」這類自然說法
+- 不要同時在 reply 和 next_question 問同一件事
+- 如果對方描述的是他人出事，不要誤問成「你是否清醒」
+- 如果位置不明確，就說「你現在人在哪裡」或「事發地點在哪裡」，不要自行腦補
 
 風險判斷原則：
 - 明確人身危險、武器、火勢、持續暴力、重傷，傾向 High
@@ -935,7 +1140,7 @@ risk_level 只能是：
 {context}
 """
 
-    resp = call_gemini(prompt)
+    resp = call_llm(prompt)
 
     text = (resp.text or "").strip()
 
@@ -950,8 +1155,9 @@ def semantic_understanding_from_text(
     audio_context: Optional[Dict[str, Any]] = None,
     extracted: Optional[Extracted] = None
 ) -> SemanticUnderstanding:
+    client_location_text = get_client_location_text(audio_context)
     fallback_entities = SemanticEntities(
-        location=(extracted.location if extracted else None),
+        location=(extracted.location if extracted and extracted.location else client_location_text),
         injured=(extracted.people_injured if extracted else None),
         weapon=(extracted.weapon if extracted else None),
         danger_active=(extracted.danger_active if extracted else None),
@@ -960,7 +1166,7 @@ def semantic_understanding_from_text(
     if not text.strip():
         return SemanticUnderstanding(entities=fallback_entities)
 
-    if GEMINI_CLIENT is None:
+    if not llm_is_ready():
         intent = "求救" if any(k in text for k in ["救", "幫", "快點", "危險"]) else "資訊補充"
         primary_need = "立即安全協助" if any(k in text for k in ["救", "危險", "受傷"]) else "釐清狀況"
         reply_strategy = "先安撫，再確認位置與安全" if any(k in text for k in ["怕", "救", "危險"]) else "先確認事件重點"
@@ -979,6 +1185,7 @@ def semantic_understanding_from_text(
         "emotion_score": (audio_context or {}).get("emotion_score"),
         "risk_level": (audio_context or {}).get("risk_level"),
         "risk_score": (audio_context or {}).get("risk_score"),
+        "client_location": client_location_text,
     }
     safe_extracted = extracted.dict() if extracted else {}
 
@@ -991,6 +1198,8 @@ def semantic_understanding_from_text(
 - primary_need 要簡短描述此刻最需要的協助
 - emotion 可綜合文字語氣與語音情緒
 - reply_strategy 要描述助理最適合的回應策略
+- 如果文字是在描述他人出事，primary_need 與 reply_strategy 也要反映「協助通報/確認現場」而不是只安撫本人
+- 不要把「我旁邊、這裡、附近、現場」當成明確位置
 
 輸出格式：
 {{
@@ -1016,7 +1225,7 @@ def semantic_understanding_from_text(
 {json.dumps(safe_extracted, ensure_ascii=False)}
 """
     try:
-        resp = call_gemini(prompt)
+        resp = call_llm(prompt)
         result_text = (resp.text or "").strip()
         if result_text.startswith("```"):
             result_text = result_text.replace("```json", "").replace("```", "").strip()
@@ -1119,8 +1328,9 @@ def chat(req: ChatRequest):
         )
 
     try:
-        data = gemini_chat_with_audio(req.messages, req.audio_context)
+        data = llm_chat_with_audio(req.messages, req.audio_context)
         extracted = data.get("extracted", {}) or {}
+        client_location_text = get_client_location_text(req.audio_context)
 
         ex = Extracted(
             category=extracted.get("category"),
@@ -1132,6 +1342,8 @@ def chat(req: ChatRequest):
             description=extracted.get("description"),
         )
         ex = apply_turn_context(req.messages, ex)
+        if not ex.location and client_location_text:
+            ex.location = client_location_text
         ex = merge_extracted(conversation_state, ex)
 
         risk_score = float(data.get("risk_score", 0.2))
@@ -1167,11 +1379,14 @@ def chat(req: ChatRequest):
         )
 
     except Exception as e:
-        print("Gemini fallback:", str(e))
+        print("LLM fallback:", str(e))
 
         score, level = simple_risk(context)
         ex = simple_extract(context)
         ex = apply_turn_context(req.messages, ex)
+        client_location_text = get_client_location_text(req.audio_context)
+        if not ex.location and client_location_text:
+            ex.location = client_location_text
         ex = merge_extracted(conversation_state, ex)
         summary = generate_incident_summary(ex, level)
         ex.description = summary
@@ -1289,6 +1504,7 @@ async def audio_to_text(audio: UploadFile = File(...)):
 
 @app.get("/reports", response_model=List[ReportItem])
 def list_reports():
+    ensure_db_available()
     try:
         conn = get_db()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -1306,6 +1522,7 @@ def list_reports():
 
 @app.post("/reports", response_model=ReportItem)
 def create_report(payload: ReportCreate):
+    ensure_db_available()
     rid = make_id("A")
     item = ReportItem(
         id=rid,
