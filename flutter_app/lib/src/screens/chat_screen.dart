@@ -6,9 +6,11 @@ import '../app.dart';
 import '../models/audio_models.dart';
 import '../models/chat_models.dart';
 import '../models/location_models.dart';
+import '../models/user_profile.dart';
 import '../services/api_service.dart';
 import '../services/audio_service.dart';
 import '../services/location_service.dart';
+import '../services/profile_service.dart';
 import '../widgets/risk_banner.dart';
 import 'records_screen.dart';
 
@@ -26,8 +28,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final ApiService _apiService = ApiService();
   final AudioService _audioService = AudioService();
   final LocationService _locationService = LocationService();
+  final ProfileService _profileService = ProfileService();
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final String _sessionId = DateTime.now().millisecondsSinceEpoch.toString();
 
   final List<ChatMessage> _history = <ChatMessage>[
     const ChatMessage(role: 'assistant', content: _assistantGreeting),
@@ -36,8 +40,15 @@ class _ChatScreenState extends State<ChatScreen> {
   ChatResponse? _latestResponse;
   AudioAnalysis? _latestAudio;
   LocationSnapshot? _currentLocation;
+  UserProfile? _profile;
   bool _isSending = false;
   bool _isRecording = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfileContext();
+  }
 
   @override
   void dispose() {
@@ -47,7 +58,18 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  Future<void> _sendMessage({String? textOverride, AudioAnalysis? audio}) async {
+  Future<void> _loadProfileContext() async {
+    final profile = await _profileService.loadProfile();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _profile = profile;
+    });
+  }
+
+  Future<void> _sendMessage(
+      {String? textOverride, AudioAnalysis? audio}) async {
     final text = (textOverride ?? _inputController.text).trim();
     if (text.isEmpty || _isSending) {
       return;
@@ -65,6 +87,13 @@ class _ChatScreenState extends State<ChatScreen> {
     await _tryFetchLocation();
 
     try {
+      final profile = _profile ?? await _profileService.loadProfile();
+      if (mounted && profile != _profile) {
+        setState(() {
+          _profile = profile;
+        });
+      }
+
       final audioContext = <String, dynamic>{
         ...?audio?.toAudioContext(),
         if (_currentLocation != null)
@@ -80,6 +109,15 @@ class _ChatScreenState extends State<ChatScreen> {
       final response = await _apiService.sendChat(
         messages: _history,
         audioContext: audioContext.isEmpty ? null : audioContext,
+        sessionId: _sessionId,
+        userContext: profile == null
+            ? null
+            : <String, dynamic>{
+                if (profile.id != null) 'user_id': profile.id,
+                if (profile.name.trim().isNotEmpty) 'name': profile.name.trim(),
+                if (profile.phone.trim().isNotEmpty)
+                  'phone': profile.phone.trim(),
+              },
       );
       if (!mounted) {
         return;
@@ -214,7 +252,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final directory = Directory.systemTemp;
-      final path = '${directory.path}${Platform.pathSeparator}ecare_recording.wav';
+      final path =
+          '${directory.path}${Platform.pathSeparator}ecare_recording.wav';
       await _audioService.startRecording(path: path);
       if (!mounted) {
         return;
@@ -224,7 +263,8 @@ class _ChatScreenState extends State<ChatScreen> {
       });
       _showSnackBar('\u958b\u59cb\u9304\u97f3');
     } catch (error) {
-      _showSnackBar('\u7121\u6cd5\u958b\u59cb\u9304\u97f3\uff0c\u8acb\u78ba\u8a8d\u9ea5\u514b\u98a8\u6b0a\u9650\u3002');
+      _showSnackBar(
+          '\u7121\u6cd5\u958b\u59cb\u9304\u97f3\uff0c\u8acb\u78ba\u8a8d\u9ea5\u514b\u98a8\u6b0a\u9650\u3002');
     }
   }
 
@@ -253,7 +293,8 @@ class _ChatScreenState extends State<ChatScreen> {
       });
 
       if (analysis.transcript.trim().isEmpty) {
-        _showSnackBar('\u6c92\u6709\u8fa8\u8b58\u5230\u8a9e\u97f3\u5167\u5bb9\uff0c\u8acb\u518d\u8a66\u4e00\u6b21');
+        _showSnackBar(
+            '\u6c92\u6709\u8fa8\u8b58\u5230\u8a9e\u97f3\u5167\u5bb9\uff0c\u8acb\u518d\u8a66\u4e00\u6b21');
         return;
       }
 
@@ -276,7 +317,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _createReportFromLatest() async {
     final latest = _latestResponse;
     if (latest == null) {
-      _showSnackBar('\u76ee\u524d\u9084\u6c92\u6709\u53ef\u5efa\u7acb\u901a\u5831\u7684\u5206\u6790\u7d50\u679c');
+      _showSnackBar(
+          '\u76ee\u524d\u9084\u6c92\u6709\u53ef\u5efa\u7acb\u901a\u5831\u7684\u5206\u6790\u7d50\u679c');
       return;
     }
 
@@ -326,14 +368,16 @@ class _ChatScreenState extends State<ChatScreen> {
       return normalized;
     }
 
-    return _currentLocation?.toDisplayText() ?? '\u5c1a\u672a\u53d6\u5f97\u4f4d\u7f6e';
+    return _currentLocation?.toDisplayText() ??
+        '\u5c1a\u672a\u53d6\u5f97\u4f4d\u7f6e';
   }
 
   void _showEscalationDialog(ChatResponse response) {
     showDialog<void>(
       context: context,
       builder: (BuildContext context) {
-        final locationText = _preferredLocationText(response.extracted.location);
+        final locationText =
+            _preferredLocationText(response.extracted.location);
         return Dialog(
           backgroundColor: Colors.transparent,
           child: Container(
@@ -417,7 +461,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _scrollToBottom() {
@@ -482,8 +527,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           children: <Widget>[
                             if (_currentLocation != null)
                               Chip(
-                                backgroundColor: Colors.white.withValues(alpha: 0.75),
-                                avatar: const Icon(Icons.location_on_outlined, size: 18),
+                                backgroundColor:
+                                    Colors.white.withValues(alpha: 0.75),
+                                avatar: const Icon(Icons.location_on_outlined,
+                                    size: 18),
                                 label: Text(_currentLocation!.toDisplayText()),
                               ),
                           ],
@@ -505,10 +552,13 @@ class _ChatScreenState extends State<ChatScreen> {
                       final isUser = item.role == 'user';
 
                       return Align(
-                        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                        alignment: isUser
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
                         child: Container(
                           margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
                           constraints: const BoxConstraints(maxWidth: 420),
                           decoration: BoxDecoration(
                             color: isUser ? EcareApp.primary : EcareApp.card,
@@ -541,16 +591,21 @@ class _ChatScreenState extends State<ChatScreen> {
                             style: OutlinedButton.styleFrom(
                               padding: EdgeInsets.zero,
                               side: BorderSide(
-                                color: _isRecording ? EcareApp.primary : const Color(0xFFCCCCCC),
+                                color: _isRecording
+                                    ? EcareApp.primary
+                                    : const Color(0xFFCCCCCC),
                               ),
-                              backgroundColor: _isRecording ? EcareApp.primary : Colors.white,
+                              backgroundColor: _isRecording
+                                  ? EcareApp.primary
+                                  : Colors.white,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
                               ),
                             ),
                             child: Icon(
                               _isRecording ? Icons.stop : Icons.mic_none,
-                              color: _isRecording ? Colors.white : EcareApp.text,
+                              color:
+                                  _isRecording ? Colors.white : EcareApp.text,
                               size: 20,
                             ),
                           ),
@@ -564,17 +619,21 @@ class _ChatScreenState extends State<ChatScreen> {
                             textInputAction: TextInputAction.send,
                             onSubmitted: (_) => _sendMessage(),
                             decoration: InputDecoration(
-                              hintText: '\u8f38\u5165\u4f60\u73fe\u5728\u7684\u72c0\u6cc1...',
+                              hintText:
+                                  '\u8f38\u5165\u4f60\u73fe\u5728\u7684\u72c0\u6cc1...',
                               filled: true,
                               fillColor: Colors.white,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(10),
-                                borderSide: const BorderSide(color: Color(0xFFCCCCCC)),
+                                borderSide:
+                                    const BorderSide(color: Color(0xFFCCCCCC)),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(10),
-                                borderSide: const BorderSide(color: EcareApp.primary),
+                                borderSide:
+                                    const BorderSide(color: EcareApp.primary),
                               ),
                             ),
                           ),
@@ -590,13 +649,15 @@ class _ChatScreenState extends State<ChatScreen> {
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
                               ),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 10),
                             ),
                             child: _isSending
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   )
                                 : const Text('\u9001\u51fa'),
                           ),
@@ -668,7 +729,8 @@ class _VoicePreviewCard extends StatelessWidget {
                       children: bars
                           .map(
                             (int height) => Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 2.5),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 2.5),
                               child: Container(
                                 width: 6,
                                 height: height.toDouble(),
@@ -686,7 +748,8 @@ class _VoicePreviewCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 const Text(
                   '00:03',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.w700),
                 ),
               ],
             ),

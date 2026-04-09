@@ -75,12 +75,16 @@ class ApiService {
   Future<ChatResponse> sendChat({
     required List<ChatMessage> messages,
     Map<String, dynamic>? audioContext,
+    String? sessionId,
+    Map<String, dynamic>? userContext,
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/chat',
       data: <String, dynamic>{
         'messages': messages.map((message) => message.toJson()).toList(),
         'audio_context': audioContext,
+        'session_id': sessionId,
+        'user_context': userContext,
       },
     );
 

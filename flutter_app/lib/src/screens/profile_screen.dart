@@ -136,14 +136,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _addressController.text = savedProfile.address;
       _noteController.text = savedProfile.note;
 
-      setState(() {
-        _message = '\u8cc7\u6599\u5df2\u5132\u5b58\u5230\u8cc7\u6599\u5eab';
-      });
-
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
+      Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) {
         return;
@@ -332,15 +325,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               maxLines: 3,
                             ),
                             const SizedBox(height: 8),
-                            Text(
-                              _message,
-                              style: const TextStyle(
-                                color: EcareApp.primaryDark,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 13,
+                            if (_message.isNotEmpty) ...<Widget>[
+                              Text(
+                                _message,
+                                style: const TextStyle(
+                                  color: EcareApp.primaryDark,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
+                              const SizedBox(height: 8),
+                            ],
                             FilledButton(
                               onPressed: _isSaving ? null : _submit,
                               style: FilledButton.styleFrom(

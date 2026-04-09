@@ -24,6 +24,34 @@ Ecare/
 
 ## 後端啟動方式
 
+### 建議方式：直接使用啟動腳本
+
+請在專案根目錄 `d:\Ecare\Ecare` 執行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\start_backend.ps1
+```
+
+`start_backend.ps1` 會先幫你設定：
+
+- PostgreSQL 連線資訊
+- Neo4j 連線資訊
+- Gemma / LLM 相關環境變數
+- 優先使用 `.venv\Scripts\python.exe`
+
+因此平常開發請優先用 `.\start_backend.ps1`，不要直接手動打 `uvicorn`。
+
+如果你看到下面這些訊息，通常代表你是直接跑了 `uvicorn`，沒有載入腳本內的環境變數：
+
+- `PostgreSQL 連線失敗 ... localhost:5432`
+- `找不到 GOOGLE_API_KEY，/chat 將使用 fallback`
+- `Neo4j 連線失敗：NEO4J_URI 或 NEO4J_PASSWORD 尚未設定`
+
+### 手動啟動方式
+
+只有在你想自行排錯或改連線設定時，才建議手動啟動。
+
 1. 建立並啟用虛擬環境：
 
 ```powershell
@@ -126,13 +154,12 @@ flutter_app/lib/src/config/api_config.dart
 後端：
 
 ```powershell
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1(開虛擬環境)
-deactivate(離開虛擬環境)
-```
-資料庫：
 .\start_backend.ps1
+.\.venv\Scripts\Activate.ps1
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+deactivate
+```
 
 Flutter：
 
