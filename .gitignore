@@ -5,6 +5,7 @@ node_modules/
 www/
 __pycache__/
 *.pyc
+*.pyc.*
 backend/__pycache__/
 android/.gradle/
 android/app/build/

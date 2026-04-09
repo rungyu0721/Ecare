@@ -1,6 +1,7 @@
 ﻿from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from datetime import datetime
 from typing import List, Literal, Optional, Dict, Any
 import whisper
 import tempfile
@@ -135,20 +136,24 @@ def check_neo4j():
 
 def query_neo4j_by_keyword(text: str) -> dict:
     """用關鍵字查詢 Neo4j，取得事件類型、風險等級、派遣建議"""
+    if not text.strip():
+        return {}
+
     driver = None
     try:
         driver = get_neo4j()
         with driver.session() as session:
             result = session.run("""
                 MATCH (k:Keyword)<-[:HAS_KEYWORD]-(e:Event)-[:EVENT_HAS_RISK]->(r:RiskLevel)
-                WHERE k.word IN $words
+                WHERE $text CONTAINS k.word
+                WITH DISTINCT e, r
+                ORDER BY coalesce(r.score_min, 0) DESC
+                LIMIT 1
                 OPTIONAL MATCH (e)-[:NEEDS_ACTION]->(a:Action)
                 RETURN e.code AS code, e.name AS name,
                        r.level AS risk_level,
                        collect(DISTINCT a.detail) AS actions
-                ORDER BY r.score_min DESC
-                LIMIT 1
-            """, words=list(text))
+            """, text=text)
             record = result.single()
             if record:
                 return {
@@ -185,6 +190,21 @@ def init_db():
                 risk_level  VARCHAR(20),
                 risk_score  FLOAT,
                 description TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ecare_user (
+                id              SERIAL PRIMARY KEY,
+                name            VARCHAR(100) NOT NULL,
+                phone           VARCHAR(30),
+                gender          VARCHAR(20),
+                age             INTEGER,
+                emergency_name  VARCHAR(100),
+                emergency_phone VARCHAR(30),
+                relationship    VARCHAR(50),
+                address         TEXT,
+                notes           TEXT,
+                created_at      VARCHAR(50) DEFAULT to_char(CURRENT_TIMESTAMP, 'YYYY/MM/DD HH24:MI')
             );
         """)
         conn.commit()
@@ -225,6 +245,39 @@ class ReportItem(BaseModel):
     risk_score: float
     description: str
 
+class UserCreate(BaseModel):
+    name:            str
+    phone:           Optional[str] = None
+    gender:          Optional[str] = None
+    age:             Optional[int] = None
+    emergency_name:  Optional[str] = None
+    emergency_phone: Optional[str] = None
+    relationship:    Optional[str] = None
+    address:         Optional[str] = None
+    notes:           Optional[str] = None
+
+class UserItem(BaseModel):
+    id:              int
+    name:            str
+    phone:           Optional[str] = None
+    gender:          Optional[str] = None
+    age:             Optional[int] = None
+    emergency_name:  Optional[str] = None
+    emergency_phone: Optional[str] = None
+    relationship:    Optional[str] = None
+    address:         Optional[str] = None
+    notes:           Optional[str] = None
+    created_at:      Optional[str] = None
+
+
+def build_user_item(row: Dict[str, Any]) -> UserItem:
+    data = dict(row)
+    created_at = data.get("created_at")
+    if isinstance(created_at, datetime):
+        data["created_at"] = created_at.isoformat(sep=" ", timespec="seconds")
+    elif created_at is not None:
+        data["created_at"] = str(created_at)
+    return UserItem(**data)
 
 def now_str():
     return time.strftime("%Y/%m/%d %H:%M", time.localtime())
@@ -570,6 +623,30 @@ def normalize_location_candidate(text: str) -> Optional[str]:
     return candidate
 
 
+def location_quality_score(text: Optional[str]) -> int:
+    if not text:
+        return -1
+
+    candidate = text.strip()
+    if not candidate:
+        return -1
+
+    score = min(len(candidate), 12)
+
+    if any(token in candidate for token in ["縣", "市", "鄉", "鎮", "區", "村", "里", "路", "街", "段", "巷", "弄", "號", "樓"]):
+        score += 8
+
+    if "+/-" in candidate and "," in candidate:
+        score += 10
+
+    if candidate.isdigit():
+        score -= 12
+    elif len(candidate) <= 3 and any(char.isdigit() for char in candidate):
+        score -= 8
+
+    return score
+
+
 def get_client_location_text(audio_context: Optional[Dict[str, Any]]) -> Optional[str]:
     if not audio_context:
         return None
@@ -646,7 +723,7 @@ def merge_extracted(base: Extracted, incoming: Extracted) -> Extracted:
     elif not base.category:
         base.category = incoming.category
 
-    if incoming.location:
+    if incoming.location and location_quality_score(incoming.location) >= location_quality_score(base.location):
         base.location = incoming.location
     if incoming.people_injured is not None:
         base.people_injured = incoming.people_injured
@@ -1559,10 +1636,97 @@ def create_report(payload: ReportCreate):
     except Exception as e:
         print(f"❌ create_report 失敗：{e}")
         raise HTTPException(status_code=500, detail=f"資料庫寫入失敗：{str(e)}")
+    
+
+@app.get("/users", response_model=List[UserItem])
+def list_users():
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM ecare_user ORDER BY created_at DESC;")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [build_user_item(row) for row in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查詢失敗：{str(e)}")
+
+@app.post("/users", response_model=UserItem)
+def create_user(payload: UserCreate):
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            INSERT INTO ecare_user
+                (name, phone, gender, age, emergency_name, emergency_phone, relationship, address, notes)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *;
+        """, (
+            payload.name, payload.phone, payload.gender, payload.age,
+            payload.emergency_name, payload.emergency_phone,
+            payload.relationship, payload.address, payload.notes
+        ))
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        return build_user_item(row)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"新增失敗：{str(e)}")
 
 
+@app.put("/users/{user_id}", response_model=UserItem)
+def update_user(user_id: int, payload: UserCreate):
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            UPDATE ecare_user
+            SET
+                name = %s,
+                phone = %s,
+                gender = %s,
+                age = %s,
+                emergency_name = %s,
+                emergency_phone = %s,
+                relationship = %s,
+                address = %s,
+                notes = %s
+            WHERE id = %s
+            RETURNING *;
+        """, (
+            payload.name, payload.phone, payload.gender, payload.age,
+            payload.emergency_name, payload.emergency_phone,
+            payload.relationship, payload.address, payload.notes,
+            user_id,
+        ))
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="找不到此使用者")
+        return build_user_item(row)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新失敗：{str(e)}")
 
 
-
-
-
+@app.get("/users/{user_id}", response_model=UserItem)
+def get_user(user_id: int):
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM ecare_user WHERE id = %s;", (user_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="找不到此使用者")
+        return build_user_item(row)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查詢失敗：{str(e)}")

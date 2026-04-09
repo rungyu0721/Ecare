@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import '../app.dart';
@@ -26,6 +27,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _noteController = TextEditingController();
 
   bool _loading = true;
+  bool _isSaving = false;
   String _message = '';
 
   @override
@@ -74,36 +76,91 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return regExp.hasMatch(value);
   }
 
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
+  String _buildSaveErrorMessage(Object error) {
+    if (error is DioException) {
+      final data = error.response?.data;
+      if (data is Map<String, dynamic>) {
+        final detail = data['detail'];
+        if (detail is String && detail.trim().isNotEmpty) {
+          return 'Save failed: ' + detail.trim();
+        }
+      }
+
+      final message = error.message?.trim();
+      if (message != null && message.isNotEmpty) {
+        return 'Save failed: ' + message;
+      }
     }
 
-    final profile = UserProfile(
-      name: _nameController.text.trim(),
-      phone: _phoneController.text.trim(),
-      gender: _genderController.text.trim(),
-      age: _ageController.text.trim(),
-      emergencyName: _emergencyNameController.text.trim(),
-      emergencyPhone: _emergencyPhoneController.text.trim(),
-      relationship: _relationshipController.text.trim(),
-      address: _addressController.text.trim(),
-      note: _noteController.text.trim(),
-      updatedAt: DateTime.now().toIso8601String(),
-    );
+    return 'Save failed. Please check backend and database connection.';
+  }
 
-    await _profileService.saveProfile(profile);
-    if (!mounted) {
+  Future<void> _submit() async {
+    if (_isSaving || !_formKey.currentState!.validate()) {
       return;
     }
 
     setState(() {
-      _message = '\u8cc7\u6599\u5df2\u5132\u5b58';
+      _isSaving = true;
+      _message = '';
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    if (mounted) {
-      Navigator.of(context).pop();
+    try {
+      final existingProfile = await _profileService.loadProfile();
+      final profile = UserProfile(
+        id: existingProfile?.id,
+        name: _nameController.text.trim(),
+        phone: _phoneController.text.trim(),
+        gender: _genderController.text.trim(),
+        age: _ageController.text.trim(),
+        emergencyName: _emergencyNameController.text.trim(),
+        emergencyPhone: _emergencyPhoneController.text.trim(),
+        relationship: _relationshipController.text.trim(),
+        address: _addressController.text.trim(),
+        note: _noteController.text.trim(),
+        updatedAt: DateTime.now().toIso8601String(),
+      );
+
+      final savedProfile = await _profileService.saveProfile(profile);
+      if (!mounted) {
+        return;
+      }
+
+      _nameController.text = savedProfile.name;
+      _phoneController.text = savedProfile.phone;
+      _genderController.text = savedProfile.gender;
+      _ageController.text = savedProfile.age;
+      _emergencyNameController.text = savedProfile.emergencyName;
+      _emergencyPhoneController.text = savedProfile.emergencyPhone;
+      _relationshipController.text = savedProfile.relationship;
+      _addressController.text = savedProfile.address;
+      _noteController.text = savedProfile.note;
+
+      setState(() {
+        _message = '\u8cc7\u6599\u5df2\u5132\u5b58\u5230\u8cc7\u6599\u5eab';
+      });
+
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      final errorMessage = _buildSaveErrorMessage(error);
+      setState(() {
+        _message = errorMessage;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMessage)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
     }
   }
 
@@ -285,7 +342,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                             const SizedBox(height: 8),
                             FilledButton(
-                              onPressed: _submit,
+                              onPressed: _isSaving ? null : _submit,
                               style: FilledButton.styleFrom(
                                 backgroundColor: EcareApp.primary,
                                 foregroundColor: Colors.white,
@@ -294,7 +351,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   borderRadius: BorderRadius.circular(14),
                                 ),
                               ),
-                              child: const Text('\u5132\u5b58\u8cc7\u6599'),
+                              child: _isSaving
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text('\u5132\u5b58\u8cc7\u6599'),
                             ),
                           ],
                         ),

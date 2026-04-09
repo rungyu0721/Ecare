@@ -127,6 +127,9 @@ flutter_app/lib/src/config/api_config.dart
 
 ```powershell
 python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1(開虛擬環境)
+deactivate(離開虛擬環境)
 ```
 資料庫：
 .\start_backend.ps1
