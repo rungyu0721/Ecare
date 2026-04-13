@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import '../models/chat_models.dart';
 import '../models/location_models.dart';
 import '../models/user_profile.dart';
 import '../services/api_service.dart';
+import '../services/audio_playback_service.dart';
 import '../services/audio_service.dart';
 import '../services/location_service.dart';
 import '../services/profile_service.dart';
@@ -27,6 +29,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final ApiService _apiService = ApiService();
   final AudioService _audioService = AudioService();
+  final AudioPlaybackService _audioPlaybackService = AudioPlaybackService();
   final LocationService _locationService = LocationService();
   final ProfileService _profileService = ProfileService();
   final TextEditingController _inputController = TextEditingController();
@@ -36,24 +39,53 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<ChatMessage> _history = <ChatMessage>[
     const ChatMessage(role: 'assistant', content: _assistantGreeting),
   ];
+  final List<_ChatTimelineItem> _timeline = <_ChatTimelineItem>[
+    const _ChatTimelineItem.text(
+      role: 'assistant',
+      content: _assistantGreeting,
+    ),
+  ];
 
   ChatResponse? _latestResponse;
   AudioAnalysis? _latestAudio;
   LocationSnapshot? _currentLocation;
+  Future<void>? _locationFetchTask;
   UserProfile? _profile;
   bool _isSending = false;
+  bool _isSendingAudioTurn = false;
   bool _isRecording = false;
+  bool _isProcessingAudio = false;
+  StreamSubscription<AudioPlaybackSnapshot>? _audioPlaybackSubscription;
+  AudioPlaybackSnapshot _playbackSnapshot = const AudioPlaybackSnapshot();
+  Timer? _recordingTicker;
+  DateTime? _recordingStartedAt;
+  Duration _recordingDuration = Duration.zero;
+  double _recordingDragDx = 0;
+  bool _willCancelRecording = false;
 
   @override
   void initState() {
     super.initState();
     _loadProfileContext();
+    _primeLocationFetch();
+    _audioPlaybackSubscription = _audioPlaybackService.snapshots
+        .listen((AudioPlaybackSnapshot snapshot) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _playbackSnapshot = snapshot;
+      });
+    });
   }
 
   @override
   void dispose() {
     _inputController.dispose();
     _scrollController.dispose();
+    _recordingTicker?.cancel();
+    _audioPlaybackSubscription?.cancel();
+    _audioPlaybackService.dispose();
     _audioService.dispose();
     super.dispose();
   }
@@ -68,25 +100,52 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _sendMessage(
-      {String? textOverride, AudioAnalysis? audio}) async {
-    final text = (textOverride ?? _inputController.text).trim();
-    if (text.isEmpty || _isSending) {
+  Future<void> _sendTextMessage() async {
+    final text = _inputController.text.trim();
+    if (text.isEmpty || _isSending || _isRecording || _isProcessingAudio) {
+      return;
+    }
+
+    await _sendMessage(
+      backendText: text,
+      timelineItem: _ChatTimelineItem.text(role: 'user', content: text),
+      clearInput: true,
+    );
+  }
+
+  Future<void> _sendMessage({
+    required String backendText,
+    required _ChatTimelineItem timelineItem,
+    AudioAnalysis? audio,
+    bool clearInput = false,
+  }) async {
+    final text = backendText.trim();
+    if (text.isEmpty || _isSending || _isRecording || _isProcessingAudio) {
       return;
     }
 
     setState(() {
       _isSending = true;
-      if (textOverride == null) {
+      _isSendingAudioTurn = timelineItem.type == _ChatTimelineItemType.audio;
+      if (clearInput) {
         _inputController.clear();
       }
       _history.add(ChatMessage(role: 'user', content: text));
+      _timeline.add(timelineItem);
     });
 
     _scrollToBottom();
-    await _tryFetchLocation();
+    final locationFetch = _primeLocationFetch();
 
     try {
+      if (_currentLocation == null) {
+        try {
+          await locationFetch.timeout(const Duration(milliseconds: 1200));
+        } catch (_) {
+          // Keep chat responsive if location takes longer than expected.
+        }
+      }
+
       final profile = _profile ?? await _profileService.loadProfile();
       if (mounted && profile != _profile) {
         setState(() {
@@ -150,6 +209,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() {
           _isSending = false;
+          _isSendingAudioTurn = false;
         });
       }
     }
@@ -173,6 +233,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     _history.add(ChatMessage(role: 'assistant', content: text));
+    _timeline.add(_ChatTimelineItem.text(role: 'assistant', content: text));
   }
 
   bool _shouldAppendNextQuestion(String reply, String? nextQuestion) {
@@ -226,6 +287,26 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _primeLocationFetch() {
+    if (_currentLocation != null) {
+      return Future<void>.value();
+    }
+
+    final existingTask = _locationFetchTask;
+    if (existingTask != null) {
+      return existingTask;
+    }
+
+    late final Future<void> task;
+    task = _tryFetchLocation().whenComplete(() {
+      if (identical(_locationFetchTask, task)) {
+        _locationFetchTask = null;
+      }
+    });
+    _locationFetchTask = task;
+    return task;
+  }
+
   Future<void> _tryFetchLocation() async {
     if (_currentLocation != null) {
       return;
@@ -245,12 +326,23 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _toggleRecording() async {
+    if ((_isSending || _isProcessingAudio) && !_isRecording) {
+      _showSnackBar(
+          '\u8acb\u5148\u7b49\u5f85\u76ee\u524d\u7684\u8a0a\u606f\u8655\u7406\u5b8c\u6210');
+      return;
+    }
+
     if (_isRecording) {
       await _stopRecordingAndSend();
       return;
     }
 
+    await _startRecording();
+  }
+
+  Future<void> _startRecording() async {
     try {
+      await _audioPlaybackService.stop();
       final directory = Directory.systemTemp;
       final path =
           '${directory.path}${Platform.pathSeparator}ecare_recording.wav';
@@ -260,7 +352,13 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       setState(() {
         _isRecording = true;
+        _recordingStartedAt = DateTime.now();
+        _recordingDuration = Duration.zero;
+        _recordingDragDx = 0;
+        _willCancelRecording = false;
       });
+      _startRecordingTicker();
+      _scrollToBottom();
       _showSnackBar('\u958b\u59cb\u9304\u97f3');
     } catch (error) {
       _showSnackBar(
@@ -270,26 +368,43 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _stopRecordingAndSend() async {
     try {
+      final startedAt = _recordingStartedAt;
+      _stopRecordingTicker();
       final audioFile = await _audioService.stopToFile();
       if (!mounted) {
         return;
       }
+      final duration = startedAt == null
+          ? _recordingDuration
+          : DateTime.now().difference(startedAt);
       setState(() {
         _isRecording = false;
+        _isProcessingAudio = true;
+        _recordingStartedAt = null;
+        _recordingDuration = Duration.zero;
+        _recordingDragDx = 0;
+        _willCancelRecording = false;
       });
 
       if (audioFile == null || !await audioFile.exists()) {
+        if (mounted) {
+          setState(() {
+            _isProcessingAudio = false;
+          });
+        }
         _showSnackBar('\u6c92\u6709\u53d6\u5f97\u9304\u97f3\u6a94');
         return;
       }
 
-      final analysis = await _apiService.uploadAudio(filePath: audioFile.path);
+      final analysis = (await _apiService.uploadAudio(filePath: audioFile.path))
+          .copyWith(localFilePath: audioFile.path);
       if (!mounted) {
         return;
       }
 
       setState(() {
         _latestAudio = analysis;
+        _isProcessingAudio = false;
       });
 
       if (analysis.transcript.trim().isEmpty) {
@@ -298,13 +413,27 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
-      await _sendMessage(textOverride: analysis.transcript, audio: analysis);
+      await _sendMessage(
+        backendText: analysis.transcript,
+        audio: analysis,
+        timelineItem: _ChatTimelineItem.audio(
+          role: 'user',
+          audio: analysis,
+          duration: duration,
+        ),
+      );
     } catch (error) {
       if (mounted) {
         setState(() {
           _isRecording = false;
+          _isProcessingAudio = false;
+          _recordingStartedAt = null;
+          _recordingDuration = Duration.zero;
+          _recordingDragDx = 0;
+          _willCancelRecording = false;
         });
       }
+      _stopRecordingTicker();
       _showSnackBar(
         ApiService.describeError(
           error,
@@ -312,6 +441,135 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _cancelRecording() async {
+    try {
+      _stopRecordingTicker();
+      final audioFile = await _audioService.stopToFile();
+      if (audioFile != null && await audioFile.exists()) {
+        await audioFile.delete();
+      }
+    } catch (_) {
+      // Ignore cleanup failures for cancelled drafts.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _isProcessingAudio = false;
+          _recordingStartedAt = null;
+          _recordingDuration = Duration.zero;
+          _recordingDragDx = 0;
+          _willCancelRecording = false;
+        });
+      }
+    }
+
+    _showSnackBar('\u5df2\u53d6\u6d88\u9304\u97f3');
+  }
+
+  Future<void> _toggleAudioPlayback(String filePath) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      _showSnackBar('\u627e\u4e0d\u5230\u9019\u6bb5\u9304\u97f3\u6a94');
+      return;
+    }
+
+    try {
+      await _audioPlaybackService.toggle(filePath);
+    } catch (_) {
+      _showSnackBar('\u7121\u6cd5\u64ad\u653e\u9019\u6bb5\u9304\u97f3');
+    }
+  }
+
+  Future<void> _handleRecordingLongPressStart() async {
+    if (_isRecording || _isSending || _isProcessingAudio) {
+      return;
+    }
+    await _startRecording();
+  }
+
+  void _handleRecordingLongPressMove(LongPressMoveUpdateDetails details) {
+    if (!_isRecording) {
+      return;
+    }
+
+    final dragDx = details.localOffsetFromOrigin.dx;
+    final shouldCancel = dragDx <= -90;
+    if (_recordingDragDx == dragDx && _willCancelRecording == shouldCancel) {
+      return;
+    }
+
+    setState(() {
+      _recordingDragDx = dragDx;
+      _willCancelRecording = shouldCancel;
+    });
+  }
+
+  Future<void> _handleRecordingLongPressEnd() async {
+    if (!_isRecording) {
+      return;
+    }
+
+    if (_willCancelRecording) {
+      await _cancelRecording();
+      return;
+    }
+
+    await _stopRecordingAndSend();
+  }
+
+  String? _voiceStatusText() {
+    if (_isRecording) {
+      if (_willCancelRecording) {
+        return '\u653e\u958b\u5f8c\u5c07\u53d6\u6d88\u9019\u6bb5\u9304\u97f3';
+      }
+      return '\u9304\u97f3\u4e2d\uff0c\u9b06\u958b\u5c31\u6703\u9001\u51fa\uff0c\u5de6\u6ed1\u53ef\u53d6\u6d88';
+    }
+
+    if (_isProcessingAudio) {
+      return '\u8a9e\u97f3\u5206\u6790\u4e2d\uff0c\u6b63\u5728\u5206\u6790\u8a9e\u97f3\u8207\u60c5\u7dd2...';
+    }
+
+    if (_isSending && _isSendingAudioTurn) {
+      return '\u5df2\u6536\u5230\u8a9e\u97f3\u8a0a\u606f\uff0c\u6b63\u5728\u6839\u64da\u9019\u6bb5\u9304\u97f3\u6574\u7406\u56de\u8986...';
+    }
+
+    return null;
+  }
+
+  Color _voiceStatusColor() {
+    if (_willCancelRecording) {
+      return const Color(0xFF8F2E22);
+    }
+
+    if (_isRecording) {
+      return EcareApp.primary;
+    }
+
+    if (_isProcessingAudio) {
+      return EcareApp.primaryDark;
+    }
+
+    return EcareApp.muted;
+  }
+
+  void _startRecordingTicker() {
+    _recordingTicker?.cancel();
+    _recordingTicker = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      final startedAt = _recordingStartedAt;
+      if (!mounted || startedAt == null) {
+        return;
+      }
+      setState(() {
+        _recordingDuration = DateTime.now().difference(startedAt);
+      });
+    });
+  }
+
+  void _stopRecordingTicker() {
+    _recordingTicker?.cancel();
+    _recordingTicker = null;
   }
 
   Future<void> _createReportFromLatest() async {
@@ -480,6 +738,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bannerRiskLevel =
+        _latestResponse?.riskLevel ?? _latestAudio?.riskLevel;
+    final bannerRiskScore =
+        _latestResponse?.riskScore ?? _latestAudio?.riskScore;
+    final voiceStatusText = _voiceStatusText();
+
     return Scaffold(
       backgroundColor: EcareApp.background,
       appBar: AppBar(
@@ -508,37 +772,27 @@ class _ChatScreenState extends State<ChatScreen> {
             constraints: const BoxConstraints(maxWidth: 940),
             child: Column(
               children: <Widget>[
-                if (_latestResponse != null)
+                if (bannerRiskLevel != null && bannerRiskScore != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
                     child: RiskBanner(
-                      riskLevel: _latestResponse!.riskLevel,
-                      riskScore: _latestResponse!.riskScore,
+                      riskLevel: bannerRiskLevel,
+                      riskScore: bannerRiskScore,
                     ),
                   ),
-                if (_currentLocation != null || _latestAudio != null)
+                if (_currentLocation != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                    child: Column(
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: <Widget>[
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: <Widget>[
-                            if (_currentLocation != null)
-                              Chip(
-                                backgroundColor:
-                                    Colors.white.withValues(alpha: 0.75),
-                                avatar: const Icon(Icons.location_on_outlined,
-                                    size: 18),
-                                label: Text(_currentLocation!.toDisplayText()),
-                              ),
-                          ],
+                        Chip(
+                          backgroundColor: Colors.white.withValues(alpha: 0.75),
+                          avatar:
+                              const Icon(Icons.location_on_outlined, size: 18),
+                          label: Text(_currentLocation!.toDisplayText()),
                         ),
-                        if (_latestAudio != null) ...<Widget>[
-                          const SizedBox(height: 10),
-                          _VoicePreviewCard(audio: _latestAudio!),
-                        ],
                       ],
                     ),
                   ),
@@ -546,31 +800,63 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.all(15),
-                    itemCount: _history.length,
+                    itemCount: _timeline.length + (_isRecording ? 1 : 0),
                     itemBuilder: (BuildContext context, int index) {
-                      final item = _history[index];
+                      if (_isRecording && index == _timeline.length) {
+                        return Align(
+                          alignment: Alignment.centerRight,
+                          child: _AudioMessageBubble.live(
+                            duration: _recordingDuration,
+                            willCancel: _willCancelRecording,
+                          ),
+                        );
+                      }
+
+                      final item = _timeline[index];
                       final isUser = item.role == 'user';
 
                       return Align(
                         alignment: isUser
                             ? Alignment.centerRight
                             : Alignment.centerLeft,
-                        child: Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 12),
-                          constraints: const BoxConstraints(maxWidth: 420),
-                          decoration: BoxDecoration(
-                            color: isUser ? EcareApp.primary : EcareApp.card,
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Text(
-                            item.content,
-                            style: TextStyle(
-                              color: isUser ? Colors.white : EcareApp.text,
-                              height: 1.4,
+                        child: item.when(
+                          text: (String content) => Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
+                            constraints: const BoxConstraints(maxWidth: 420),
+                            decoration: BoxDecoration(
+                              color: isUser ? EcareApp.primary : EcareApp.card,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              content,
+                              style: TextStyle(
+                                color: isUser ? Colors.white : EcareApp.text,
+                                height: 1.4,
+                              ),
                             ),
                           ),
+                          audio: (AudioAnalysis audio, Duration duration) {
+                            final audioPath = audio.localFilePath;
+                            final isCurrentPlayback = audioPath != null &&
+                                _playbackSnapshot.currentFilePath == audioPath;
+                            return _AudioMessageBubble.sent(
+                              audio: audio,
+                              duration: duration,
+                              isSendingReply: _isSendingAudioTurn &&
+                                  _isSending &&
+                                  index == _timeline.length - 1,
+                              isPlaying: isCurrentPlayback &&
+                                  _playbackSnapshot.isPlaying,
+                              playbackPosition: isCurrentPlayback
+                                  ? _playbackSnapshot.position
+                                  : Duration.zero,
+                              onTogglePlayback: audioPath == null
+                                  ? null
+                                  : () => _toggleAudioPlayback(audioPath),
+                            );
+                          },
                         ),
                       );
                     },
@@ -581,87 +867,206 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Container(
                     color: Colors.white,
                     padding: const EdgeInsets.all(10),
-                    child: Row(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        SizedBox(
-                          width: 44,
-                          height: 44,
-                          child: OutlinedButton(
-                            onPressed: _toggleRecording,
-                            style: OutlinedButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              side: BorderSide(
-                                color: _isRecording
-                                    ? EcareApp.primary
-                                    : const Color(0xFFCCCCCC),
-                              ),
-                              backgroundColor: _isRecording
-                                  ? EcareApp.primary
-                                  : Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                        Row(
+                          children: <Widget>[
+                            SizedBox(
+                              width: 48,
+                              height: 48,
+                              child: GestureDetector(
+                                onTap: (_isSending || _isProcessingAudio) &&
+                                        !_isRecording
+                                    ? null
+                                    : _toggleRecording,
+                                onLongPressStart: (_isSending ||
+                                        _isProcessingAudio ||
+                                        _isRecording)
+                                    ? null
+                                    : (_) => _handleRecordingLongPressStart(),
+                                onLongPressMoveUpdate: _isRecording
+                                    ? _handleRecordingLongPressMove
+                                    : null,
+                                onLongPressEnd: _isRecording
+                                    ? (_) => _handleRecordingLongPressEnd()
+                                    : null,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 180),
+                                  decoration: BoxDecoration(
+                                    color: _isRecording
+                                        ? (_willCancelRecording
+                                            ? const Color(0xFF8F2E22)
+                                            : EcareApp.primary)
+                                        : Colors.white,
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: _isRecording
+                                          ? Colors.transparent
+                                          : const Color(0xFFCCCCCC),
+                                    ),
+                                    boxShadow: _isRecording
+                                        ? <BoxShadow>[
+                                            BoxShadow(
+                                              color: (_willCancelRecording
+                                                      ? const Color(0xFF8F2E22)
+                                                      : EcareApp.primary)
+                                                  .withValues(alpha: 0.28),
+                                              blurRadius: 18,
+                                              offset: const Offset(0, 8),
+                                            ),
+                                          ]
+                                        : const <BoxShadow>[],
+                                  ),
+                                  child: Icon(
+                                    _isRecording
+                                        ? (_willCancelRecording
+                                            ? Icons.delete_outline
+                                            : Icons.mic_rounded)
+                                        : Icons.mic_none,
+                                    color: _isRecording
+                                        ? Colors.white
+                                        : EcareApp.text,
+                                    size: 22,
+                                  ),
+                                ),
                               ),
                             ),
-                            child: Icon(
-                              _isRecording ? Icons.stop : Icons.mic_none,
-                              color:
-                                  _isRecording ? Colors.white : EcareApp.text,
-                              size: 20,
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 180),
+                                child: _isRecording
+                                    ? _RecordingComposerStrip(
+                                        key:
+                                            const ValueKey<String>('recording'),
+                                        duration: _recordingDuration,
+                                        willCancel: _willCancelRecording,
+                                        dragDx: _recordingDragDx,
+                                      )
+                                    : TextField(
+                                        key: const ValueKey<String>(
+                                            'text-input'),
+                                        controller: _inputController,
+                                        enabled: !_isProcessingAudio,
+                                        minLines: 1,
+                                        maxLines: 4,
+                                        textInputAction: TextInputAction.send,
+                                        onSubmitted: (_) => _sendTextMessage(),
+                                        decoration: InputDecoration(
+                                          hintText:
+                                              '\u8f38\u5165\u4f60\u73fe\u5728\u7684\u72c0\u6cc1...',
+                                          filled: true,
+                                          fillColor: Colors.white,
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                  horizontal: 12, vertical: 10),
+                                          enabledBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: const BorderSide(
+                                                color: Color(0xFFCCCCCC)),
+                                          ),
+                                          focusedBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: const BorderSide(
+                                                color: EcareApp.primary),
+                                          ),
+                                          disabledBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: const BorderSide(
+                                                color: Color(0xFFE3D6C5)),
+                                          ),
+                                        ),
+                                      ),
+                              ),
                             ),
-                          ),
+                            if (!_isRecording) ...<Widget>[
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                height: 44,
+                                child: FilledButton(
+                                  onPressed: (_isSending || _isProcessingAudio)
+                                      ? null
+                                      : _sendTextMessage,
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: EcareApp.primary,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 10),
+                                  ),
+                                  child: _isSending
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      : const Text('\u9001\u51fa'),
+                                ),
+                              ),
+                            ] else ...<Widget>[
+                              const SizedBox(width: 8),
+                              AnimatedContainer(
+                                duration: const Duration(milliseconds: 180),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _willCancelRecording
+                                      ? const Color(0xFFFFE7E2)
+                                      : const Color(0xFFFFF3E6),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  _willCancelRecording
+                                      ? '\u653e\u958b\u53d6\u6d88'
+                                      : '\u9b06\u958b\u9001\u51fa',
+                                  style: TextStyle(
+                                    color: _willCancelRecording
+                                        ? const Color(0xFF8F2E22)
+                                        : EcareApp.text,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: _inputController,
-                            minLines: 1,
-                            maxLines: 4,
-                            textInputAction: TextInputAction.send,
-                            onSubmitted: (_) => _sendMessage(),
-                            decoration: InputDecoration(
-                              hintText:
-                                  '\u8f38\u5165\u4f60\u73fe\u5728\u7684\u72c0\u6cc1...',
-                              filled: true,
-                              fillColor: Colors.white,
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 10),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                                borderSide:
-                                    const BorderSide(color: Color(0xFFCCCCCC)),
+                        if (voiceStatusText != null) ...<Widget>[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: <Widget>[
+                              Icon(
+                                _isRecording
+                                    ? Icons.graphic_eq_rounded
+                                    : _isProcessingAudio
+                                        ? Icons.psychology_alt_outlined
+                                        : Icons.chat_bubble_outline_rounded,
+                                size: 16,
+                                color: _voiceStatusColor(),
                               ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                                borderSide:
-                                    const BorderSide(color: EcareApp.primary),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  voiceStatusText,
+                                  style: TextStyle(
+                                    color: _voiceStatusColor(),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                               ),
-                            ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        SizedBox(
-                          height: 44,
-                          child: FilledButton(
-                            onPressed: _isSending ? null : _sendMessage,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: EcareApp.primary,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 10),
-                            ),
-                            child: _isSending
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  )
-                                : const Text('\u9001\u51fa'),
-                          ),
-                        ),
+                        ],
                       ],
                     ),
                   ),
@@ -675,34 +1080,127 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class _VoicePreviewCard extends StatelessWidget {
-  const _VoicePreviewCard({
-    required this.audio,
-  });
+enum _ChatTimelineItemType { text, audio }
 
-  final AudioAnalysis audio;
+class _ChatTimelineItem {
+  const _ChatTimelineItem.text({
+    required this.role,
+    required this.content,
+  })  : type = _ChatTimelineItemType.text,
+        audio = null,
+        duration = Duration.zero;
+
+  const _ChatTimelineItem.audio({
+    required this.role,
+    required this.audio,
+    required this.duration,
+  })  : type = _ChatTimelineItemType.audio,
+        content = null,
+        assert(audio != null);
+
+  final String role;
+  final _ChatTimelineItemType type;
+  final String? content;
+  final AudioAnalysis? audio;
+  final Duration duration;
+
+  T when<T>({
+    required T Function(String content) text,
+    required T Function(AudioAnalysis audio, Duration duration) audio,
+  }) {
+    switch (type) {
+      case _ChatTimelineItemType.text:
+        return text(content ?? '');
+      case _ChatTimelineItemType.audio:
+        return audio(this.audio!, duration);
+    }
+  }
+}
+
+class _AudioMessageBubble extends StatelessWidget {
+  const _AudioMessageBubble.sent({
+    required this.audio,
+    required this.duration,
+    required this.isSendingReply,
+    required this.isPlaying,
+    required this.playbackPosition,
+    required this.onTogglePlayback,
+  })  : isLive = false,
+        willCancel = false;
+
+  const _AudioMessageBubble.live({
+    required this.duration,
+    required this.willCancel,
+  })  : isLive = true,
+        audio = null,
+        isSendingReply = false,
+        isPlaying = false,
+        playbackPosition = Duration.zero,
+        onTogglePlayback = null;
+
+  final bool isLive;
+  final AudioAnalysis? audio;
+  final Duration duration;
+  final bool isSendingReply;
+  final bool willCancel;
+  final bool isPlaying;
+  final Duration playbackPosition;
+  final VoidCallback? onTogglePlayback;
+
+  String _formatDuration(Duration value) {
+    final totalSeconds = value.inSeconds;
+    final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  List<double> _barHeights() {
+    final seed = isLive
+        ? duration.inMilliseconds ~/ 250
+        : (isPlaying
+            ? playbackPosition.inMilliseconds ~/ 180
+            : duration.inMilliseconds ~/ 500);
+    return List<double>.generate(
+      16,
+      (int index) => 10 + ((index * 7 + seed * 3) % 20).toDouble(),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final bars = List<int>.generate(18, (int index) => 10 + ((index * 7) % 24));
+    final bars = _barHeights();
+    final bubbleColor = isLive
+        ? (willCancel ? const Color(0xFF8F2E22) : EcareApp.primaryDark)
+        : EcareApp.primary;
+    final bubbleShadow = isLive
+        ? (willCancel
+            ? const Color.fromRGBO(143, 46, 34, 0.28)
+            : const Color.fromRGBO(184, 75, 61, 0.22))
+        : const Color.fromRGBO(201, 90, 74, 0.18);
+    final statusText = isLive
+        ? (willCancel ? '\u653e\u958b\u5f8c\u53d6\u6d88' : '\u9304\u97f3\u4e2d')
+        : isSendingReply
+            ? '\u5df2\u9001\u51fa\uff0c\u5206\u6790\u4e2d'
+            : isPlaying
+                ? '\u64ad\u653e\u4e2d'
+                : (audio?.isHighRisk ?? false)
+                    ? '\u8a9e\u97f3\u8a0a\u606f\uff0c\u512a\u5148\u8655\u7406'
+                    : '\u8a9e\u97f3\u8a0a\u606f';
 
-    return Align(
-      alignment: Alignment.centerRight,
+    return GestureDetector(
+      onTap: onTogglePlayback,
       child: Container(
-        width: 320,
-        padding: const EdgeInsets.all(14),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        constraints: const BoxConstraints(maxWidth: 360),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: <Color>[Color(0xFF6D5DFC), Color(0xFF4D46E5)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: const <BoxShadow>[
+          color: bubbleColor,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: <BoxShadow>[
             BoxShadow(
-              color: Color.fromRGBO(77, 70, 229, 0.18),
-              blurRadius: 20,
-              offset: Offset(0, 8),
+              color: bubbleShadow,
+              blurRadius: 16,
+              offset: const Offset(0, 8),
             ),
           ],
         ),
@@ -712,30 +1210,38 @@ class _VoicePreviewCard extends StatelessWidget {
             Row(
               children: <Widget>[
                 Container(
-                  width: 42,
-                  height: 42,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.18),
+                    color: Colors.white.withValues(alpha: 0.16),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.play_arrow, color: Colors.white),
+                  child: Icon(
+                    isLive
+                        ? Icons.mic_rounded
+                        : isPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 10),
                 Expanded(
                   child: SizedBox(
-                    height: 42,
+                    height: 28,
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: bars
                           .map(
-                            (int height) => Padding(
+                            (double height) => Padding(
                               padding:
-                                  const EdgeInsets.symmetric(horizontal: 2.5),
+                                  const EdgeInsets.symmetric(horizontal: 2),
                               child: Container(
-                                width: 6,
-                                height: height.toDouble(),
+                                width: 4,
+                                height: height,
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.9),
+                                  color: Colors.white.withValues(alpha: 0.92),
                                   borderRadius: BorderRadius.circular(999),
                                 ),
                               ),
@@ -746,33 +1252,22 @@ class _VoicePreviewCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  '00:03',
-                  style: TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w700),
+                Text(
+                  _formatDuration(isPlaying ? playbackPosition : duration),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: <Widget>[
-                _VoiceActionChip(label: '\u60c5\u7dd2 ${audio.emotion}'),
-                const SizedBox(width: 8),
-                _VoiceActionChip(label: '\u98a8\u96aa ${audio.riskLevel}'),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF7EA),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                audio.transcript,
-                style: const TextStyle(color: EcareApp.text, height: 1.5),
+            const SizedBox(height: 8),
+            Text(
+              statusText,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.9),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
@@ -782,25 +1277,106 @@ class _VoicePreviewCard extends StatelessWidget {
   }
 }
 
-class _VoiceActionChip extends StatelessWidget {
-  const _VoiceActionChip({
-    required this.label,
+class _RecordingComposerStrip extends StatelessWidget {
+  const _RecordingComposerStrip({
+    super.key,
+    required this.duration,
+    required this.willCancel,
+    required this.dragDx,
   });
 
-  final String label;
+  final Duration duration;
+  final bool willCancel;
+  final double dragDx;
+
+  String _formatDuration(Duration value) {
+    final totalSeconds = value.inSeconds;
+    final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  List<double> _barHeights() {
+    final seed = duration.inMilliseconds ~/ 180;
+    return List<double>.generate(
+      18,
+      (int index) => 8 + ((index * 5 + seed * 3) % 18).toDouble(),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    final bars = _barHeights();
+    final clampedDx = dragDx.clamp(-120.0, 0.0);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+        color: willCancel ? const Color(0xFFFFE7E2) : const Color(0xFFFFF3E6),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: willCancel ? const Color(0xFFD97C6F) : const Color(0xFFE2C8A2),
+        ),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(color: Colors.white, fontSize: 13),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: willCancel ? const Color(0xFF8F2E22) : EcareApp.primary,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _formatDuration(duration),
+            style: TextStyle(
+              color: willCancel ? const Color(0xFF8F2E22) : EcareApp.text,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: bars
+                  .map(
+                    (double height) => Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                      child: Container(
+                        width: 3,
+                        height: height,
+                        decoration: BoxDecoration(
+                          color: (willCancel
+                                  ? const Color(0xFF8F2E22)
+                                  : EcareApp.primaryDark)
+                              .withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Transform.translate(
+            offset: Offset(clampedDx / 5, 0),
+            child: Text(
+              willCancel
+                  ? '\u653e\u958b\u53d6\u6d88'
+                  : '\u5de6\u6ed1\u53d6\u6d88',
+              style: TextStyle(
+                color: willCancel ? const Color(0xFF8F2E22) : EcareApp.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

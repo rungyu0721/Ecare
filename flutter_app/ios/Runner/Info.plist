@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>E-CARE 需要定位目前位置，才能協助判斷事發地點與緊急程度。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>E-CARE 需要使用麥克風接收語音求助，分析情緒並轉成文字回覆。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -31,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = true;
   bool _isHolding = false;
   double _holdProgress = 0;
+  Future<void>? _locationFetchTask;
 
   @override
   void initState() {
@@ -60,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ? '\u8acb\u5148\u5b8c\u6210\u500b\u4eba\u8cc7\u6599\u8a2d\u5b9a\uff0c\u4e4b\u5f8c\u9047\u5230\u7dca\u6025\u72c0\u6cc1\u6642\u624d\u80fd\u5feb\u901f\u5e36\u5165\u8cc7\u8a0a\u3002'
             : '\u76ee\u524d\u8cc7\u6599\u5df2\u6e96\u5099\u5b8c\u6210\uff1a${refreshed.name} / ${refreshed.phone}';
       });
+      unawaited(_primeLocationFetch());
       return;
     }
 
@@ -69,6 +73,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _loading = false;
       _resultText = '\u76ee\u524d\u8cc7\u6599\u5df2\u6e96\u5099\u5b8c\u6210\uff1a${profile.name} / ${profile.phone}';
     });
+    unawaited(_primeLocationFetch());
   }
 
   Future<void> _startEmergencyFlow() async {
@@ -119,10 +124,34 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _fetchLocationOnce() async {
-    setState(() {
-      _statusText = '\u6b63\u5728\u53d6\u5f97\u4f4d\u7f6e...';
+  Future<void> _primeLocationFetch({bool force = false}) {
+    if (!force && _locationText != '\u5c1a\u672a\u53d6\u5f97\u4f4d\u7f6e') {
+      return Future<void>.value();
+    }
+
+    final existingTask = _locationFetchTask;
+    if (existingTask != null) {
+      return existingTask;
+    }
+
+    late final Future<void> task;
+    task = _fetchLocationOnce(
+      updateStatus: force || _locationText == '\u5c1a\u672a\u53d6\u5f97\u4f4d\u7f6e',
+    ).whenComplete(() {
+      if (identical(_locationFetchTask, task)) {
+        _locationFetchTask = null;
+      }
     });
+    _locationFetchTask = task;
+    return task;
+  }
+
+  Future<void> _fetchLocationOnce({bool updateStatus = true}) async {
+    if (updateStatus && mounted) {
+      setState(() {
+        _statusText = '\u6b63\u5728\u53d6\u5f97\u4f4d\u7f6e...';
+      });
+    }
 
     try {
       final location = await _locationService.getCurrentLocation();
@@ -483,9 +512,17 @@ class _HomeScreenState extends State<HomeScreen> {
                           Align(
                             alignment: Alignment.centerRight,
                             child: TextButton.icon(
-                              onPressed: _fetchLocationOnce,
+                              onPressed: _locationFetchTask != null
+                                  ? null
+                                  : () {
+                                      unawaited(_primeLocationFetch(force: true));
+                                    },
                               icon: const Icon(Icons.my_location, size: 16),
-                              label: const Text('\u66f4\u65b0\u4f4d\u7f6e'),
+                              label: Text(
+                                _locationFetchTask != null
+                                    ? '\u53d6\u5f97\u4e2d...'
+                                    : '\u66f4\u65b0\u4f4d\u7f6e',
+                              ),
                             ),
                           ),
                           _InfoRow(

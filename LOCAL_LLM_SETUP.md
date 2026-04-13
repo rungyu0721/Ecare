@@ -17,6 +17,9 @@ Optional values:
 ```powershell
 $env:GEMMA_CHAT_PATH="/v1/chat/completions"
 $env:GEMMA_API_KEY=""
+$env:GEMMA_MAX_TOKENS="256"
+$env:CHAT_CONTEXT_TURNS="6"
+$env:ENABLE_LLM_GRAPH_PLANNER="0"
 ```
 
 ## Notes
@@ -24,6 +27,9 @@ $env:GEMMA_API_KEY=""
 - If your local server base URL already ends with `/v1`, the backend will call `/chat/completions`.
 - If it does not end with `/v1`, the backend will call `/v1/chat/completions`.
 - `GEMMA_CHAT_PATH` lets you override that path when your local tool uses a custom route.
+- `GEMMA_MAX_TOKENS` limits response size and usually improves latency for JSON-style replies.
+- `CHAT_CONTEXT_TURNS` controls how many recent turns are sent to the LLM.
+- `ENABLE_LLM_GRAPH_PLANNER=0` skips the extra LLM planning step and is faster for local Gemma.
 
 ## Start backend
 

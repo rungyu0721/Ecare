@@ -1,5 +1,6 @@
 ﻿from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import BackgroundTasks
 from pydantic import BaseModel
 from datetime import datetime
 from typing import List, Literal, Optional, Dict, Any
@@ -283,7 +284,7 @@ def graph_reasoning_from_context(
 ) -> GraphQueryPlan:
     fallback = build_fallback_graph_query_plan(messages, conversation_state, audio_context)
 
-    if not llm_is_ready():
+    if not ENABLE_LLM_GRAPH_PLANNER or not llm_is_ready():
         return fallback
 
     latest_text = latest_user_text(messages)
@@ -497,7 +498,6 @@ def build_neo4j_hint(
 
     if graph_knowledge:
         lines.append("知識圖譜查詢結果：")
-        lines.append(f"- Cypher：{graph_knowledge.get('cypher', '')}")
         lines.append(f"- 事件類型：{graph_knowledge.get('event_name', '未知')}")
         lines.append(f"- 風險等級：{graph_knowledge.get('risk_level', '未知')}")
         actions = graph_knowledge.get("actions") or []
@@ -797,6 +797,38 @@ def make_id(prefix="A"):
 
 WHISPER_MODEL = None
 GEMINI_CLIENT = None
+
+
+def env_int(
+    name: str,
+    default: int,
+    *,
+    minimum: Optional[int] = None,
+    maximum: Optional[int] = None,
+) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
 LLM_MODEL_NAME = os.getenv(
     "LLM_MODEL",
@@ -805,6 +837,12 @@ LLM_MODEL_NAME = os.getenv(
 GEMMA_BASE_URL = os.getenv("GEMMA_BASE_URL", "").strip()
 GEMMA_API_KEY = os.getenv("GEMMA_API_KEY", "").strip()
 GEMMA_CHAT_PATH = os.getenv("GEMMA_CHAT_PATH", "").strip()
+GEMMA_MAX_TOKENS = env_int("GEMMA_MAX_TOKENS", 256, minimum=64, maximum=1024)
+CHAT_CONTEXT_TURNS = env_int("CHAT_CONTEXT_TURNS", 6, minimum=2, maximum=10)
+ENABLE_LLM_GRAPH_PLANNER = env_flag(
+    "ENABLE_LLM_GRAPH_PLANNER",
+    default=(LLM_PROVIDER == "gemini"),
+)
 EMOTION_MODEL = None
 
 
@@ -841,6 +879,13 @@ def load_models():
             print("⚠️ Gemma provider 未完整設定，/chat 將使用 fallback")
     else:
         print(f"⚠️ 不支援的 LLM_PROVIDER={LLM_PROVIDER}，/chat 將使用 fallback")
+
+    print(
+        "ℹ️ Chat latency config:"
+        f" context_turns={CHAT_CONTEXT_TURNS},"
+        f" graph_planner={'on' if ENABLE_LLM_GRAPH_PLANNER else 'off'},"
+        f" gemma_max_tokens={GEMMA_MAX_TOKENS}"
+    )
 
     try:
         EMOTION_MODEL = joblib.load("backend/emotion_model.pkl")
@@ -904,6 +949,8 @@ def call_gemma(contents: str):
             }
         ],
         "temperature": 0.3,
+        "max_tokens": GEMMA_MAX_TOKENS,
+        "stream": False,
     }
     request = urllib.request.Request(
         endpoint,
@@ -1008,6 +1055,55 @@ def predict_emotion_from_wav(wav_path: str):
     }
 
 
+def localize_audio_emotion(emotion: str) -> str:
+    mapping = {
+        "panic": "非常慌張",
+        "fearful": "害怕",
+        "sad": "低落難受",
+        "angry": "激動",
+        "neutral": "相對平穩",
+        "unknown": "情緒待確認",
+    }
+    return mapping.get((emotion or "").strip().lower(), emotion or "情緒待確認")
+
+
+def summarize_transcript_for_audio_reply(transcript: str, max_length: int = 20) -> str:
+    cleaned = re.sub(r"\s+", " ", (transcript or "")).strip()
+    if not cleaned:
+        return "剛剛的語音"
+    if len(cleaned) <= max_length:
+        return cleaned
+    return f"{cleaned[:max_length].rstrip()}..."
+
+
+def build_audio_analysis_summary(
+    transcript: str,
+    emotion: str,
+    risk_level: str,
+    situation: Optional[str],
+) -> str:
+    snippet = summarize_transcript_for_audio_reply(transcript)
+    emotion_text = localize_audio_emotion(emotion)
+    situation_text = situation or "目前狀況"
+
+    if risk_level == "High":
+        return (
+            f"我有聽到你提到「{snippet}」，從語音情緒與內容判斷目前可能是緊急狀況，"
+            "我會優先協助確認安全、位置，以及是否需要立即通報。"
+        )
+
+    if risk_level == "Medium":
+        return (
+            f"我有收到這段語音，聽起來你現在可能有些{emotion_text}，"
+            f"我先幫你整理成{situation_text}的重點，再一起確認下一步。"
+        )
+
+    return (
+        f"我有收到你的語音內容，先幫你整理成{situation_text}的重點；"
+        "如果情況有變化，也可以再直接補充。"
+    )
+
+
 def build_audio_analysis_result(transcript: str, emotion: str, emotion_score: float):
     score, level = simple_risk(transcript)
     ex = simple_extract(transcript)
@@ -1019,17 +1115,18 @@ def build_audio_analysis_result(transcript: str, emotion: str, emotion_score: fl
     elif emotion == "angry":
         score = min(1.0, score + 0.08)
 
-    if score > 0.8:
-        level = "High"
-    elif score > 0.5:
-        level = "Medium"
-    else:
-        level = "Low"
+    score, level = apply_structured_risk_floor(transcript, ex, score, level)
+    if not ex.dispatch_advice:
+        ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+    ex.description = generate_incident_summary(ex, level)
+    analysis_summary = build_audio_analysis_summary(transcript, emotion, level, ex.category)
 
     return {
         "situation": ex.category or "待確認",
         "risk_score": round(score, 2),
         "risk_level": level,
+        "should_escalate": level == "High",
+        "analysis_summary": analysis_summary,
         "extracted": ex.dict()
     }
 # ======================
@@ -1192,6 +1289,19 @@ ACUTE_MEDICAL_HIGH_KEYWORDS = {
     "嘴唇發紫",
 }
 
+CRITICAL_INJURY_HIGH_KEYWORDS = {
+    "大量流血",
+    "血流不止",
+    "一直流血",
+    "失去意識",
+    "意識不清",
+    "昏迷",
+    "叫不醒",
+    "倒地",
+    "倒在地上",
+    "重傷",
+}
+
 MEDICAL_URGENCY_KEYWORDS = ACUTE_MEDICAL_HIGH_KEYWORDS | {
     "發燒",
     "頭暈",
@@ -1265,8 +1375,20 @@ def location_quality_score(text: Optional[str]) -> int:
     if any(token in candidate for token in ["縣", "市", "鄉", "鎮", "區", "村", "里", "路", "街", "段", "巷", "弄", "號", "樓"]):
         score += 8
 
+    if any(token in candidate for token in LANDMARK_HINT_TOKENS):
+        score += 6
+
     if "+/-" in candidate and "," in candidate:
         score += 10
+
+    if any(token in candidate for token in INCIDENT_DESCRIPTION_KEYWORDS):
+        score -= 10
+
+    if any(token in candidate for token in ["現在在", "目前在", "人在", "地上", "有人", "對方"]):
+        score -= 6
+
+    if any(token in candidate for token in ["，", ",", "。", "；", ";"]):
+        score -= 6
 
     if candidate.isdigit():
         score -= 12
@@ -1302,6 +1424,36 @@ def is_likely_location_response(text: str) -> bool:
         return False
 
     return has_strong_location_signal(candidate) or location_quality_score(candidate) >= 14
+
+
+def extract_location_from_text(text: str) -> Optional[str]:
+    candidates: List[str] = []
+
+    for key in ["地址是", "地點是", "位於", "目前在", "現在在", "人在", "在"]:
+        start = 0
+        while True:
+            idx = text.find(key, start)
+            if idx < 0:
+                break
+
+            raw_segment = text[idx + len(key): idx + len(key) + 30]
+            parts = [raw_segment] + re.split(r"[，,。！？；;\n]", raw_segment)
+            for part in parts:
+                candidate = normalize_location_candidate(part)
+                if candidate and is_likely_location_response(candidate):
+                    candidates.append(candidate)
+
+            start = idx + len(key)
+
+    if not candidates:
+        return None
+
+    candidates = list(dict.fromkeys(candidates))
+    candidates.sort(
+        key=lambda candidate: (location_quality_score(candidate), len(candidate)),
+        reverse=True,
+    )
+    return candidates[0]
 
 
 def is_likely_incident_detail(text: str, ex: Optional[Extracted] = None) -> bool:
@@ -1355,6 +1507,16 @@ def has_acute_medical_signal(text: str) -> bool:
     return any(keyword in text for keyword in ACUTE_MEDICAL_HIGH_KEYWORDS)
 
 
+def has_critical_injury_signal(text: str) -> bool:
+    if any(keyword in text for keyword in CRITICAL_INJURY_HIGH_KEYWORDS):
+        return True
+
+    return "流血" in text and any(
+        keyword in text
+        for keyword in ["倒地", "倒在地上", "昏倒", "失去意識", "叫不醒", "沒呼吸", "重傷"]
+    )
+
+
 def has_medical_urgency_signal(text: str) -> bool:
     return any(keyword in text for keyword in MEDICAL_URGENCY_KEYWORDS)
 
@@ -1406,10 +1568,24 @@ def apply_structured_risk_floor(
     level = risk_level if risk_level in ["Low", "Medium", "High"] else risk_level_from_score(score)
 
     if ex.category == "醫療急症":
-        if ex.breathing_difficulty is True or ex.conscious is False or has_acute_medical_signal(text):
-            score = max(score, 0.85)
+        if (
+            ex.breathing_difficulty is True
+            or ex.conscious is False
+            or has_acute_medical_signal(text)
+            or has_critical_injury_signal(text)
+        ):
+            score = max(score, 0.9)
         elif ex.fever is True or has_medical_urgency_signal(text) or ex.people_injured is True:
             score = max(score, 0.62)
+
+    if ex.category in ["暴力事件", "交通事故"]:
+        if ex.weapon is True or has_critical_injury_signal(text):
+            score = max(score, 0.88)
+        elif ex.people_injured is True:
+            score = max(score, 0.68)
+
+    if ex.category == "火災" and (ex.people_injured is True or ex.danger_active is True):
+        score = max(score, 0.88)
 
     level = risk_level_from_score(score)
     return score, level
@@ -1634,13 +1810,7 @@ def simple_extract(text: str) -> Extracted:
     else:
         ex.danger_active = None
 
-    for key in ["在", "位於", "地址", "地點是"]:
-        if key in text:
-            idx = text.find(key) + len(key)
-            candidate = normalize_location_candidate(text[idx: idx + 25])
-            if candidate and is_likely_location_response(candidate):
-                ex.location = candidate
-                break
+    ex.location = extract_location_from_text(text)
 
     ex = enrich_extracted_details(ex, text)
     ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
@@ -1700,6 +1870,7 @@ def apply_turn_context(messages: List[ChatMessage], ex: Extracted) -> Extracted:
             break
 
     normalized_location = normalize_location_candidate(latest_user_text)
+    extracted_location = extract_location_from_text(latest_user_text)
     asked_for_location = asks_about_location(previous_assistant_text)
 
     if (
@@ -1710,6 +1881,18 @@ def apply_turn_context(messages: List[ChatMessage], ex: Extracted) -> Extracted:
         and normalized_location
     ):
         ex.location = normalized_location
+
+    current_location = normalize_location_candidate(ex.location or "")
+    if extracted_location:
+        current_has_incident_noise = bool(current_location) and any(
+            token in current_location for token in INCIDENT_DESCRIPTION_KEYWORDS
+        )
+        if (
+            not current_location
+            or current_has_incident_noise
+            or location_quality_score(extracted_location) > location_quality_score(current_location)
+        ):
+            ex.location = extracted_location
 
     ex = enrich_extracted_details(ex, latest_user_text)
 
@@ -1950,7 +2133,24 @@ def sanitize_reply_and_question(
 def simple_risk(text: str):
     score = 0.2
 
-    high_keywords = ["流血", "昏倒", "沒呼吸", "火災", "失火", "刀", "砍", "打架", "威脅", "闖入"]
+    high_keywords = [
+        "流血",
+        "昏倒",
+        "沒呼吸",
+        "失去意識",
+        "倒地",
+        "倒在地上",
+        "大量流血",
+        "血流不止",
+        "重傷",
+        "火災",
+        "失火",
+        "刀",
+        "砍",
+        "打架",
+        "威脅",
+        "闖入",
+    ]
     medium_keywords = ["可疑", "跟蹤", "害怕", "噪音", "吵鬧", "怪人"]
 
     if any(k in text for k in high_keywords):
@@ -2036,7 +2236,7 @@ def llm_chat(messages: List[ChatMessage]) -> Dict[str, Any]:
     if not llm_is_ready():
         raise RuntimeError("LLM 未初始化")
 
-    recent = messages[-10:]
+    recent = messages[-CHAT_CONTEXT_TURNS:]
     context = "\n".join(
         f"{'使用者' if m.role == 'user' else '助手'}：{m.content}"
         for m in recent
@@ -2096,7 +2296,7 @@ JSON 格式如下：
 }}
 
 風險規則：
-- 涉及火災、流血、昏倒、沒呼吸、持刀、打架、威脅、闖入 → High
+- 涉及火災、流血倒地、大量出血、失去意識、昏倒、沒呼吸、持刀、打架、威脅、闖入 → High
 - 涉及可疑人士、跟蹤、害怕、嚴重噪音衝突 → Medium
 - 低急迫性一般諮詢 → Low
 
@@ -2124,7 +2324,7 @@ def llm_chat_with_audio(
     if not llm_is_ready():
         raise RuntimeError("LLM client not ready")
 
-    recent = messages[-10:]
+    recent = messages[-CHAT_CONTEXT_TURNS:]
     conversation_state = extract_conversation_state(messages)
     user_identity = build_graph_user_identity(session_id, user_context)
     client_location_text = get_client_location_text(audio_context)
@@ -2234,7 +2434,7 @@ risk_level 只能是：
 - 如果位置不明確，就說「你現在人在哪裡」或「事發地點在哪裡」，不要自行腦補
 
 風險判斷原則：
-- 明確人身危險、武器、火勢、持續暴力、重傷，傾向 High
+- 明確人身危險、武器、火勢、持續暴力、重傷、流血倒地、大量出血、失去意識，傾向 High
 - 有受傷、威脅、自傷風險、狀況未明但令人擔心，傾向 Medium
 - 單純諮詢、情緒低落但無立即危險，傾向 Low
 
@@ -2430,7 +2630,7 @@ def next_question_from_semantic(
 # ======================
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, background_tasks: BackgroundTasks):
     context = " ".join(
         m.content for m in req.messages if m.role == "user"
     ).strip()
@@ -2509,7 +2709,14 @@ def chat(req: ChatRequest):
         reply = apply_semantic_tone(reply, semantic, risk_level)
         nq = next_question_from_semantic(nq, semantic, ex, risk_level)
         reply, nq = sanitize_reply_and_question(reply, nq, ex, risk_level)
-        sync_chat_state_to_neo4j(req.session_id, req.user_context, ex, semantic, latest_text)
+        background_tasks.add_task(
+            sync_chat_state_to_neo4j,
+            req.session_id,
+            req.user_context,
+            ex,
+            semantic,
+            latest_text,
+        )
 
         return ChatResponse(
             reply=reply,
@@ -2546,7 +2753,14 @@ def chat(req: ChatRequest):
         reply, follow_up = contextualize_reply_and_question(req.messages, ex, reply, follow_up, level)
         reply = apply_semantic_tone(reply, semantic, level)
         reply, follow_up = sanitize_reply_and_question(reply, follow_up, ex, level)
-        sync_chat_state_to_neo4j(req.session_id, req.user_context, ex, semantic, latest_text)
+        background_tasks.add_task(
+            sync_chat_state_to_neo4j,
+            req.session_id,
+            req.user_context,
+            ex,
+            semantic,
+            latest_text,
+        )
 
         return ChatResponse(
             reply=reply,
@@ -2629,6 +2843,8 @@ async def audio_to_text(audio: UploadFile = File(...)):
             "situation": final_result["situation"],
             "risk_level": final_result["risk_level"],
             "risk_score": final_result["risk_score"],
+            "should_escalate": final_result["should_escalate"],
+            "analysis_summary": final_result["analysis_summary"],
             "extracted": final_result["extracted"]
         }
 
