@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>E-CARE：緊急報案系統</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="Style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+</head>
+<body>
+
+  <!-- ====== HEADER ====== -->
+  <header class="header" role="banner">
+    <div class="header-top">
+      <div class="header-logo">
+        <div class="logo-icon" aria-hidden="true">E</div>
+        <h1>E-CARE：緊急報案系統</h1>
+      </div>
+      <div class="header-controls">
+        <button class="btn-add-case" id="btnAddCase" aria-label="新增案件">➕ 新增案件</button>
+        <button class="sound-toggle" id="soundToggle" aria-label="音效開關">
+          <span class="sound-icon">🔔</span>
+          <span class="sound-label">音效：開啟</span>
+        </button>
+        <div class="system-status" role="status">
+          <span class="status-led"></span><span>系統正常</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 頁籤 + 統計條 -->
+    <div class="header-stats">
+      <nav class="page-nav" aria-label="頁面切換">
+        <button class="page-nav-btn active" data-page="map"     onclick="switchPage('map')">
+          <span class="page-nav-icon">🗺</span><span class="page-nav-label">今日事件</span>
+        </button>
+        <button class="page-nav-btn" data-page="officer" onclick="switchPage('officer')">
+          <span class="page-nav-icon">👮</span><span class="page-nav-label">警員操作</span>
+        </button>
+        <button class="page-nav-btn" data-page="history" onclick="switchPage('history')">
+          <span class="page-nav-icon">📋</span><span class="page-nav-label">歷史紀錄</span>
+        </button>
+      </nav>
+      <div class="stats-divider"></div>
+      <span class="stats-label">今日案件</span>
+      <span class="stats-total" id="statTotal">0</span>
+      <div class="stat-badge"><span class="stat-dot danger"></span><span class="stat-count" id="statDanger">0</span></div>
+      <div class="stat-badge"><span class="stat-dot warn"></span><span class="stat-count" id="statWarn">0</span></div>
+      <div class="stat-badge"><span class="stat-dot safe"></span><span class="stat-count" id="statSafe">0</span></div>
+    </div>
+  </header>
+
+  <!-- ====================================================
+       頁面一：今日事件（全螢幕地圖）
+       ==================================================== -->
+  <div class="page-content" id="page-map">
+    <!-- 全螢幕 Leaflet 地圖 -->
+    <div id="todayMap"></div>
+
+    <!-- 右側資訊卡（點擊案件後顯示） -->
+    <div class="map-info-card hidden" id="mapInfoCard">
+      <button class="map-info-close" onclick="closeMapCard()" aria-label="關閉">✕</button>
+      <div class="map-info-body" id="mapInfoBody"></div>
+    </div>
+
+    <!-- 左側圖例 -->
+    <div class="map-legend">
+      <div class="legend-title">案件圖例</div>
+      <div class="legend-item"><span class="legend-dot danger"></span>高風險</div>
+      <div class="legend-item"><span class="legend-dot warn"></span>中風險</div>
+      <div class="legend-item"><span class="legend-dot safe"></span>低風險</div>
+      <div class="legend-item"><span class="legend-dot inactive"></span>已結案</div>
+    </div>
+
+    <!-- 右下角今日統計浮層 -->
+    <div class="map-today-stats">
+      <div class="mts-row"><span class="mts-label">今日案件</span><span class="mts-val" id="mtsTotal">0</span></div>
+      <div class="mts-row"><span class="mts-dot danger"></span><span class="mts-label">高風險</span><span class="mts-val" id="mtsDanger">0</span></div>
+      <div class="mts-row"><span class="mts-dot warn"></span><span class="mts-label">中風險</span><span class="mts-val" id="mtsWarn">0</span></div>
+      <div class="mts-row"><span class="mts-dot safe"></span><span class="mts-label">低風險</span><span class="mts-val" id="mtsSafe">0</span></div>
+      <div class="mts-date" id="mtsDate"></div>
+    </div>
+  </div>
+
+  <!-- ====================================================
+       頁面二：警員操作（原有三欄）
+       ==================================================== -->
+  <div class="page-content" id="page-officer" style="display:none;">
+    <main class="main-content" role="main">
+
+      <!-- 左欄：案件列表 -->
+      <aside class="case-list-panel" aria-label="案件列表">
+        <div class="panel-header">
+          案件列表
+          <span style="font-size:12px;color:var(--text-dim);" id="caseCount"></span>
+        </div>
+        <div class="case-list" id="caseList" role="list"></div>
+      </aside>
+
+      <!-- 中欄：案件詳細 -->
+      <section class="detail-panel" aria-label="案件詳細資訊">
+        <div class="panel-header">
+          案件詳細
+          <span style="font-size:11px;color:var(--text-dim);">點選左側案件查看</span>
+        </div>
+        <div class="detail-scroll" id="detailContent">
+          <div class="no-case-selected">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+            </svg>
+            <p>請從左側選擇案件查看詳細資訊</p>
+          </div>
+        </div>
+        <div class="log-panel">
+          <div class="panel-header" style="padding:10px 16px;">
+            操作紀錄<span style="font-size:11px;color:var(--text-dim);margin-left:8px;">最新在上</span>
+          </div>
+          <div class="log-list" id="logList"><div class="log-empty">尚無操作紀錄</div></div>
+        </div>
+      </section>
+
+      <!-- 右欄：派遣方式 -->
+      <aside class="dispatch-panel" aria-label="派遣操作">
+        <div class="panel-header">派遣方式</div>
+        <div class="dispatch-buttons">
+          <button class="dispatch-btn police"    onclick="handleDispatch('police',    '🚔 派遣警力')"   aria-label="派遣警力"><span class="btn-icon">🚔</span>派遣警力</button>
+          <button class="dispatch-btn ambulance" onclick="handleDispatch('ambulance', '🚑 派遣救護')"   aria-label="派遣救護"><span class="btn-icon">🚑</span>派遣救護</button>
+          <button class="dispatch-btn fire"      onclick="handleDispatch('fire',      '🚒 消防派遣')"   aria-label="消防派遣"><span class="btn-icon">🚒</span>消防派遣</button>
+          <button class="dispatch-btn phone"     onclick="handleDispatch('phone',     '📞 回撥報案人')" aria-label="回撥報案人"><span class="btn-icon">📞</span>回撥報案人</button>
+          <hr style="border:none;border-top:1px solid var(--border);margin:4px 0;"/>
+          <button class="dispatch-btn misreport" onclick="handleDispatch('misreport', '🚫 標記誤報')"   aria-label="標記誤報"><span class="btn-icon">🚫</span>標記誤報</button>
+          <button class="dispatch-btn manual"    onclick="handleDispatch('manual',    '👤 轉人工')"     aria-label="轉人工處理"><span class="btn-icon">🔄</span>轉人工</button>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- ====================================================
+       頁面三：歷史紀錄
+       ==================================================== -->
+  <div class="page-content" id="page-history" style="display:none;">
+    <div class="full-page-inner">
+      <div class="history-header">
+        <h2 class="section-title">📋 案件歷史紀錄</h2>
+        <div class="history-filters">
+          <!-- 日期選擇 -->
+          <input type="date" class="modal-input" id="filterDate" onchange="renderHistory()" style="width:150px;"/>
+          <select class="modal-select" id="filterRisk" onchange="renderHistory()" style="width:110px;">
+            <option value="">全部風險</option>
+            <option value="High">高風險</option>
+            <option value="Medium">中風險</option>
+            <option value="Low">低風險</option>
+          </select>
+          <select class="modal-select" id="filterStatus" onchange="renderHistory()" style="width:110px;">
+            <option value="">全部狀態</option>
+            <option value="處理中">處理中</option>
+            <option value="已轉人工">已轉人工</option>
+            <option value="誤報">誤報</option>
+            <option value="已處理">已處理</option>
+          </select>
+          <input class="modal-input" id="filterKeyword" oninput="renderHistory()" placeholder="🔍 搜尋…" style="width:160px;"/>
+          <button class="btn-cancel" onclick="clearHistoryFilters()" style="padding:8px 12px;">清除</button>
+          <span class="history-count" id="historyCount"></span>
+        </div>
+      </div>
+
+      <!-- 日期分組顯示 -->
+      <div id="historyGroups"></div>
+    </div>
+  </div>
+
+  <!-- ====== MODAL ====== -->
+  <div class="modal-backdrop hidden" id="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div style="position:absolute;inset:0;" onclick="closeModal()"></div>
+    <div class="modal" role="document">
+      <div class="modal-title" id="modalTitle">確認操作</div>
+      <div class="modal-subtitle" id="modalSubtitle"></div>
+      <div id="modalExtraFields"></div>
+      <div class="modal-field">
+        <label class="modal-label" id="modalNoteLabel" for="modalNote">操作備註</label>
+        <textarea class="modal-textarea" id="modalNote" rows="3" placeholder="請輸入操作備註（選填）"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeModal()">取消</button>
+        <button class="btn-confirm" id="modalConfirmBtn" onclick="confirmModal()">確認</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="Main.js"></script>
+  <script src="pages.js"></script>
+  <script src="police.js"></script>
+</body>
+</html>
