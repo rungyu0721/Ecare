@@ -106,14 +106,20 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    await _sendMessage(
+    final textTurnStopwatch = Stopwatch()..start();
+    final isSuccess = await _sendMessage(
       backendText: text,
       timelineItem: _ChatTimelineItem.text(role: 'user', content: text),
       clearInput: true,
     );
+    textTurnStopwatch.stop();
+
+    if (isSuccess && mounted) {
+      _reportTextTurnLatency(textTurnStopwatch.elapsed);
+    }
   }
 
-  Future<void> _sendMessage({
+  Future<bool> _sendMessage({
     required String backendText,
     required _ChatTimelineItem timelineItem,
     AudioAnalysis? audio,
@@ -121,7 +127,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }) async {
     final text = backendText.trim();
     if (text.isEmpty || _isSending || _isRecording || _isProcessingAudio) {
-      return;
+      return false;
     }
 
     setState(() {
@@ -179,7 +185,7 @@ class _ChatScreenState extends State<ChatScreen> {
               },
       );
       if (!mounted) {
-        return;
+        return false;
       }
 
       setState(() {
@@ -195,9 +201,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (response.shouldEscalate) {
         _showEscalationDialog(response);
       }
+      return true;
     } catch (error) {
       if (!mounted) {
-        return;
+        return false;
       }
       _showSnackBar(
         ApiService.describeError(
@@ -205,6 +212,7 @@ class _ChatScreenState extends State<ChatScreen> {
           action: '\u804a\u5929\u8acb\u6c42',
         ),
       );
+      return false;
     } finally {
       if (mounted) {
         setState(() {
@@ -368,6 +376,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _stopRecordingAndSend() async {
     try {
+      final voiceTurnStopwatch = Stopwatch()..start();
       final startedAt = _recordingStartedAt;
       _stopRecordingTicker();
       final audioFile = await _audioService.stopToFile();
@@ -396,8 +405,10 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
+      final audioAnalysisStopwatch = Stopwatch()..start();
       final analysis = (await _apiService.uploadAudio(filePath: audioFile.path))
           .copyWith(localFilePath: audioFile.path);
+      audioAnalysisStopwatch.stop();
       if (!mounted) {
         return;
       }
@@ -413,7 +424,8 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
-      await _sendMessage(
+      final chatReplyStopwatch = Stopwatch()..start();
+      final isSuccess = await _sendMessage(
         backendText: analysis.transcript,
         audio: analysis,
         timelineItem: _ChatTimelineItem.audio(
@@ -422,6 +434,16 @@ class _ChatScreenState extends State<ChatScreen> {
           duration: duration,
         ),
       );
+      chatReplyStopwatch.stop();
+      voiceTurnStopwatch.stop();
+
+      if (isSuccess && mounted) {
+        _reportVoiceTurnLatency(
+          audioAnalysisDuration: audioAnalysisStopwatch.elapsed,
+          chatReplyDuration: chatReplyStopwatch.elapsed,
+          totalDuration: voiceTurnStopwatch.elapsed,
+        );
+      }
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -721,6 +743,32 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _reportVoiceTurnLatency({
+    required Duration audioAnalysisDuration,
+    required Duration chatReplyDuration,
+    required Duration totalDuration,
+  }) {
+    debugPrint(
+      'E-CARE voice latency -> analysis: ${_formatLatency(audioAnalysisDuration)}, '
+      'chat: ${_formatLatency(chatReplyDuration)}, '
+      'total: ${_formatLatency(totalDuration)}',
+    );
+  }
+
+  void _reportTextTurnLatency(Duration totalDuration) {
+    debugPrint(
+      'E-CARE text latency -> total: ${_formatLatency(totalDuration)}',
+    );
+  }
+
+  String _formatLatency(Duration duration) {
+    final milliseconds = duration.inMilliseconds;
+    if (milliseconds >= 1000) {
+      return '${(milliseconds / 1000).toStringAsFixed(1)}\u79d2';
+    }
+    return '$milliseconds ms';
   }
 
   void _scrollToBottom() {

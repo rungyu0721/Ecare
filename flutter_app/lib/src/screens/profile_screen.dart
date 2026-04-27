@@ -82,13 +82,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (data is Map<String, dynamic>) {
         final detail = data['detail'];
         if (detail is String && detail.trim().isNotEmpty) {
-          return 'Save failed: ' + detail.trim();
+          return 'Save failed: ${detail.trim()}';
         }
       }
 
       final message = error.message?.trim();
       if (message != null && message.isNotEmpty) {
-        return 'Save failed: ' + message;
+        return 'Save failed: $message';
       }
     }
 

@@ -1,5 +1,23 @@
 # E-CARE
 
+## Ollama Qwen2.5 快速切換
+
+目前專案已可直接使用 `Ollama + Qwen2.5` 作為本地聊天模型，不需要再經過 LM Studio。
+
+```powershell
+ollama pull qwen2.5:7b
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\start_backend.ps1
+```
+
+預設會使用：
+
+- `LLM_PROVIDER=ollama`
+- `LLM_MODEL=qwen2.5:7b`
+- `OLLAMA_BASE_URL=http://127.0.0.1:11434`
+
+更完整的本地模型設定請看 `LOCAL_LLM_SETUP.md`。
+
 E-CARE 是一個緊急事件協助專案，目前架構分成兩部分：
 
 - `backend/`：FastAPI 後端，負責聊天分析、語音分析、通報紀錄
