@@ -79,12 +79,19 @@ def init_db():
                 title       VARCHAR(200),
                 category    VARCHAR(100),
                 location    TEXT,
+                latitude    DOUBLE PRECISION,
+                longitude   DOUBLE PRECISION,
                 status      VARCHAR(50) DEFAULT '處理中',
                 created_at  VARCHAR(50),
                 risk_level  VARCHAR(20),
                 risk_score  FLOAT,
                 description TEXT
             );
+        """)
+        cur.execute("""
+            ALTER TABLE case_records
+                ADD COLUMN IF NOT EXISTS latitude  DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ecare_user (

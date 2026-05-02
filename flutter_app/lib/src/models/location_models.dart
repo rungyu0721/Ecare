@@ -14,10 +14,8 @@ class LocationSnapshot {
   String toDisplayText() {
     final addressText = address?.trim();
     if (addressText != null && addressText.isNotEmpty) {
-      return '$addressText '
-          '(+/- ${accuracy.round()}m)';
+      return '$addressText (+/- ${accuracy.round()}m)';
     }
-
     return '${latitude.toStringAsFixed(6)}, '
         '${longitude.toStringAsFixed(6)} '
         '(+/- ${accuracy.round()}m)';

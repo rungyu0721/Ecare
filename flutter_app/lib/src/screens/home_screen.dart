@@ -94,6 +94,8 @@ class _HomeScreenState extends State<HomeScreen> {
         title: '\u7dca\u6025\u901a\u5831',
         category: '\u7dca\u6025\u4e8b\u4ef6',
         location: locationText,
+        latitude: location.latitude,
+        longitude: location.longitude,
         riskLevel: 'High',
         riskScore: 1.0,
         description:

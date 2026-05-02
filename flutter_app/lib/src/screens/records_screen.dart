@@ -44,20 +44,21 @@ class _RecordsScreenState extends State<RecordsScreen> {
     }
   }
 
-  Uri? _mapsUri(String location) {
-    final head = location.split(' ').first.trim();
-    final parts = head.split(',');
-    if (parts.length != 2) {
-      return null;
+  Uri? _mapsUri(ReportItem item) {
+    final lat = item.latitude;
+    final lng = item.longitude;
+    if (lat != null && lng != null) {
+      return Uri.parse('https://www.google.com/maps?q=$lat,$lng');
     }
 
-    final lat = double.tryParse(parts[0]);
-    final lng = double.tryParse(parts[1]);
-    if (lat == null || lng == null) {
-      return null;
-    }
-
-    return Uri.parse('https://www.google.com/maps?q=$lat,$lng');
+    // fallback: try to extract (lat, lng) embedded in location string
+    final match = RegExp(r'\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)')
+        .firstMatch(item.location);
+    if (match == null) return null;
+    final parsedLat = double.tryParse(match.group(1)!);
+    final parsedLng = double.tryParse(match.group(2)!);
+    if (parsedLat == null || parsedLng == null) return null;
+    return Uri.parse('https://www.google.com/maps?q=$parsedLat,$parsedLng');
   }
 
   String _riskLabel(String level) {
@@ -117,7 +118,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
                 separatorBuilder: (_, __) => const SizedBox(height: 14),
                 itemBuilder: (BuildContext context, int index) {
                   final item = reports[index];
-                  final mapUri = _mapsUri(item.location);
+                  final mapUri = _mapsUri(item);
 
                   return Container(
                     decoration: BoxDecoration(

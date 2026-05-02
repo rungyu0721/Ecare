@@ -610,6 +610,8 @@ class _ChatScreenState extends State<ChatScreen> {
         title: extracted.category ?? 'E-CARE \u901a\u5831',
         category: extracted.category ?? '\u4e00\u822c\u4e8b\u4ef6',
         location: locationText,
+        latitude: _currentLocation?.latitude,
+        longitude: _currentLocation?.longitude,
         riskLevel: latest.riskLevel,
         riskScore: latest.riskScore,
         description: extracted.description ?? latest.reply,

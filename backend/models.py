@@ -104,6 +104,8 @@ class ReportCreate(BaseModel):
     title: str
     category: str
     location: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     risk_level: str
     risk_score: float
     description: str
@@ -114,6 +116,8 @@ class ReportItem(BaseModel):
     title: str
     category: str
     location: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     status: str
     created_at: str
     risk_level: str

@@ -4,6 +4,8 @@ class ReportItem {
     required this.title,
     required this.category,
     required this.location,
+    this.latitude,
+    this.longitude,
     required this.status,
     required this.createdAt,
     required this.riskLevel,
@@ -15,6 +17,8 @@ class ReportItem {
   final String title;
   final String category;
   final String location;
+  final double? latitude;
+  final double? longitude;
   final String status;
   final String createdAt;
   final String riskLevel;
@@ -27,6 +31,8 @@ class ReportItem {
       title: json['title'] as String? ?? '',
       category: json['category'] as String? ?? '',
       location: json['location'] as String? ?? '',
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
       status: json['status'] as String? ?? '',
       createdAt: json['created_at'] as String? ?? '',
       riskLevel: json['risk_level'] as String? ?? 'Low',

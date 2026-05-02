@@ -17,6 +17,11 @@ local.properties
 start_backend.ps1
 .claude/
 *.pkl
+*.gguf
+scripts/output/
+torch_wheels/
+torch_wheels_linux/
+wheels_linux/
 flutter_app/.dart_tool/
 flutter_app/.packages
 flutter_app/build/

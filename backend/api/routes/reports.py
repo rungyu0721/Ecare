@@ -51,6 +51,8 @@ def create_report(payload: ReportCreate):
         title=payload.title,
         category=payload.category,
         location=payload.location,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
         status="處理中",
         created_at=now_str(),
         risk_level=payload.risk_level,
@@ -63,12 +65,14 @@ def create_report(payload: ReportCreate):
         cur.execute(
             """
             INSERT INTO case_records
-                (id, title, category, location, status, created_at, risk_level, risk_score, description)
+                (id, title, category, location, latitude, longitude,
+                 status, created_at, risk_level, risk_score, description)
             VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 item.id, item.title, item.category, item.location,
+                item.latitude, item.longitude,
                 item.status, item.created_at, item.risk_level,
                 item.risk_score, item.description,
             )

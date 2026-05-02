@@ -143,17 +143,20 @@ class LocationService {
           address['municipality'] as String?,
         ]);
         final villageOrArea = _firstNonEmpty(<String?>[
+          address['hamlet'] as String?,
           address['village'] as String?,
           address['suburb'] as String?,
           address['borough'] as String?,
           address['quarter'] as String?,
           address['neighbourhood'] as String?,
         ]);
-        final road = _firstNonEmpty(<String?>[
+        final rawRoad = _firstNonEmpty(<String?>[
           address['road'] as String?,
           address['pedestrian'] as String?,
           address['footway'] as String?,
         ]);
+        // 省道編號（如 "187丙"、"1甲"）不是有用的街道名稱，排除
+        final road = _looksLikeHighwayCode(rawRoad) ? null : rawRoad;
         final houseNumber = _firstNonEmpty(<String?>[
           address['house_number'] as String?,
         ]);
@@ -247,6 +250,12 @@ class LocationService {
       return null;
     }
     return cleaned;
+  }
+
+  bool _looksLikeHighwayCode(String? value) {
+    final text = value?.trim();
+    if (text == null || text.isEmpty) return false;
+    return RegExp(r'^\d+[甲乙丙丁戊己庚辛壬癸]?$').hasMatch(text);
   }
 
   String? _valueIfCountyOrCity(String? value) {
