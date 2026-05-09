@@ -30,6 +30,7 @@ from .location import (
     location_quality_score,
     normalize_location_candidate,
 )
+from backend.services.incident_taxonomy import match_incident_taxonomy
 
 
 # ======================
@@ -177,14 +178,31 @@ def enrich_extracted_details(ex: Extracted, text: str) -> Extracted:
 
 def simple_extract(text: str) -> Extracted:
     ex = Extracted(description=text)
+    taxonomy_match = match_incident_taxonomy(text)
     has_disturbance = has_disturbance_signal(text)
     has_aggressive_disturbance = has_aggressive_disturbance_signal(text)
     has_suspicious_activity = any(keyword in text for keyword in SUSPICIOUS_ACTIVITY_KEYWORDS)
     has_violence_signal = any(keyword in text for keyword in VIOLENCE_SIGNAL_KEYWORDS)
+    has_child_protection_signal = (
+        any(k in text for k in ["家暴", "虐待", "受虐", "打小孩", "打罵", "摔東西", "砸東西"])
+        or (
+            any(k in text for k in ["小孩", "孩子", "兒童", "幼童", "嬰兒"])
+            and any(k in text for k in ["哀號", "哭叫", "尖叫", "求救", "慘叫", "一直哭"])
+        )
+        or (
+            any(k in text for k in ["隔壁", "樓上", "樓下", "鄰居"])
+            and any(k in text for k in ["哀號", "哭叫", "尖叫", "求救", "慘叫", "一直哭"])
+        )
+    )
 
-    if any(k in text for k in ["火災", "失火", "著火", "起火", "冒煙", "燒起來"]):
+    if taxonomy_match and taxonomy_match.get("app_category"):
+        ex.category = taxonomy_match["app_category"]
+        subtype = taxonomy_match.get("subtype")
+        if subtype:
+            ex.symptom_summary = f"疑似{subtype}"
+    elif any(k in text for k in ["火災", "失火", "著火", "起火", "冒煙", "燒起來"]):
         ex.category = "火災"
-    elif has_violence_signal or (
+    elif has_child_protection_signal or has_violence_signal or (
         has_aggressive_disturbance
         and any(keyword in text for keyword in ["威脅", "逼近", "靠近", "要打", "要砍", "攻擊"])
     ):
@@ -206,10 +224,13 @@ def simple_extract(text: str) -> Extracted:
         ex.people_injured = None
 
     ex.weapon = True if any(k in text for k in ["刀", "槍", "武器", "棍棒"]) else None
-    ex.danger_active = True if any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場"]) else None
+    ex.danger_active = True if has_child_protection_signal or any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場"]) else None
     ex.location = extract_location_from_text(text)
     ex = enrich_extracted_details(ex, text)
-    ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+    if taxonomy_match and taxonomy_match.get("advice"):
+        ex.dispatch_advice = taxonomy_match["advice"]
+    else:
+        ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
     return ex
 
 
@@ -243,7 +264,10 @@ def merge_extracted(base: Extracted, incoming: Extracted) -> Extracted:
     if incoming.description:
         base.description = incoming.description
 
-    base.dispatch_advice = get_dispatch_advice(base.category, base.weapon, base.people_injured)
+    if incoming.dispatch_advice:
+        base.dispatch_advice = incoming.dispatch_advice
+    else:
+        base.dispatch_advice = get_dispatch_advice(base.category, base.weapon, base.people_injured)
     return base
 
 

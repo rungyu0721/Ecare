@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import List
 
+from backend.services.incident_taxonomy import match_incident_taxonomy
+
 
 # ======================
 # 關鍵字集合（從 data/keywords.json 載入）
@@ -110,7 +112,17 @@ def has_high_risk_context_signal(text: str) -> bool:
 
 
 def has_active_violence_emergency(text: str) -> bool:
-    if any(keyword in text for keyword in ["打架", "闖入", "家暴", "被打"]):
+    child_distress = (
+        any(keyword in text for keyword in ["小孩", "孩子", "兒童", "幼童", "嬰兒"])
+        and any(keyword in text for keyword in ["哀號", "哭叫", "尖叫", "求救", "慘叫", "一直哭"])
+    )
+    neighbor_distress = (
+        any(keyword in text for keyword in ["隔壁", "樓上", "樓下", "鄰居"])
+        and any(keyword in text for keyword in ["哀號", "哭叫", "尖叫", "求救", "慘叫", "一直哭"])
+    )
+    if child_distress or neighbor_distress:
+        return True
+    if any(keyword in text for keyword in ["打架", "闖入", "家暴", "被打", "虐待", "受虐", "打小孩", "打罵"]):
         return True
     return has_contextual_pattern(text, VIOLENCE_HIGH_CONTEXT_PATTERNS)
 
@@ -150,15 +162,33 @@ def risk_level_from_score(score: float) -> str:
 
 def simple_risk(text: str):
     score = 0.2
+    taxonomy_match = match_incident_taxonomy(text)
+
+    if taxonomy_match:
+        group_id = taxonomy_match.get("group_id")
+        subtype = taxonomy_match.get("subtype")
+        if group_id == "fire_rescue":
+            score = 0.78
+            if subtype in ["火災事故", "緊急救護", "交通事故", "山域水域救援", "危險物品事故"]:
+                score = 0.86
+        elif group_id == "criminal":
+            if subtype in ["暴力犯罪", "家庭暴力", "性侵害犯罪", "特殊刑案"]:
+                score = 0.86
+            else:
+                score = 0.55
+        elif group_id == "medical_legal":
+            score = 0.55
+        elif group_id == "civil_social":
+            score = 0.35
 
     if has_high_risk_context_signal(text):
-        score = 0.9
+        score = max(score, 0.9)
     elif has_aggressive_disturbance_signal(text):
-        score = 0.6
+        score = max(score, 0.6)
     elif is_repeated_alert_noise(text):
-        score = 0.55
+        score = max(score, 0.55)
     elif any(k in text for k in MEDIUM_ALERT_KEYWORDS):
-        score = 0.6
+        score = max(score, 0.6)
 
     score += random.uniform(-0.03, 0.03)
     score = max(0.0, min(1.0, score))
@@ -175,6 +205,19 @@ def apply_structured_risk_floor(
 ) -> tuple:
     score = max(0.0, min(1.0, float(risk_score)))
     level = risk_level if risk_level in ["Low", "Medium", "High"] else risk_level_from_score(score)
+    taxonomy_match = match_incident_taxonomy(text)
+
+    if taxonomy_match:
+        group_id = taxonomy_match.get("group_id")
+        subtype = taxonomy_match.get("subtype")
+        if group_id == "fire_rescue":
+            score = max(score, 0.78)
+            if subtype in ["火災事故", "緊急救護", "交通事故", "山域水域救援", "危險物品事故"]:
+                score = max(score, 0.86)
+        elif group_id == "criminal" and subtype in ["暴力犯罪", "家庭暴力", "性侵害犯罪", "特殊刑案"]:
+            score = max(score, 0.86)
+        elif group_id == "criminal":
+            score = max(score, 0.55)
 
     if ex.category == "醫療急症":
         if (

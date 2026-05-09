@@ -6,14 +6,17 @@
 
 ```powershell
 ollama pull qwen2.5:7b
+ollama create ecare:latest -f Modelfile
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\start_backend.ps1
 ```
 
+如果你本機同時有 `ecare-qwen2.5:latest` 和 `ecare:latest`，請優先使用 `ecare:latest`。前者是舊的 Ollama 模型，還帶著修正前的 template。
+
 預設會使用：
 
 - `LLM_PROVIDER=ollama`
-- `LLM_MODEL=qwen2.5:7b`
+- `LLM_MODEL=ecare:latest`
 - `OLLAMA_BASE_URL=http://127.0.0.1:11434`
 
 更完整的本地模型設定請看 `LOCAL_LLM_SETUP.md`。

@@ -189,6 +189,28 @@ def from_medical_signals(text: str) -> bool:
     )
 
 
+REPORT_STYLE_MARKERS = (
+    "案件類型：",
+    "地點：",
+    "通報角色：",
+    "傷勢：",
+    "意識：",
+    "呼吸：",
+    "症狀摘要：",
+    "危險狀況：",
+    "風險等級：",
+    "建議派遣：",
+)
+
+
+def looks_like_report_style_reply(text: str) -> bool:
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+    marker_hits = sum(marker in normalized for marker in REPORT_STYLE_MARKERS)
+    return marker_hits >= 2 or normalized.count(" | ") >= 2
+
+
 # ======================
 # 消毒回應
 # ======================
@@ -208,6 +230,15 @@ def sanitize_reply_and_question(
         normalized_location = normalize_location_candidate(ex.location)
         if normalized_location:
             ex.location = normalized_location
+
+    if looks_like_report_style_reply(reply):
+        if ex.category == "醫療急症":
+            reply = build_medical_acknowledgement(ex, ex.description or "")
+        else:
+            reply = build_incident_acknowledgement(ex)
+
+    if looks_like_report_style_reply(next_q):
+        next_q = next_question(ex, risk_level)
 
     for _ in range(4):
         changed = False

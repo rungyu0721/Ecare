@@ -4,11 +4,14 @@ This backend now supports `LLM_PROVIDER=ollama` directly and uses Ollama's OpenA
 
 ## 1. Install and pull the model
 
-Use Ollama to download Qwen2.5 locally:
+Use Ollama to download Qwen2.5 locally and build the E-CARE fine-tuned model:
 
 ```powershell
 ollama pull qwen2.5:7b
+ollama create ecare:latest -f Modelfile
 ```
+
+If you still have `ecare-qwen2.5:latest` locally, prefer `ecare:latest` for app testing. The older `ecare-qwen2.5:latest` model was built before the Qwen chat-template fix.
 
 If the Ollama service is not already running on your machine, start it:
 
@@ -22,7 +25,7 @@ Use these values in PowerShell before starting the backend:
 
 ```powershell
 $env:LLM_PROVIDER="ollama"
-$env:LLM_MODEL="qwen2.5:7b"
+$env:LLM_MODEL="ecare:latest"
 $env:OLLAMA_BASE_URL="http://127.0.0.1:11434"
 ```
 
@@ -55,7 +58,7 @@ cd D:\Ecare\Ecare
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
 $env:LLM_PROVIDER="ollama"
-$env:LLM_MODEL="qwen2.5:7b"
+$env:LLM_MODEL="ecare:latest"
 $env:OLLAMA_BASE_URL="http://127.0.0.1:11434"
 python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```

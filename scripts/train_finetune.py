@@ -11,9 +11,11 @@ E-CARE Fine-tune 訓練腳本（HuggingFace PEFT + QLoRA）
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import torch
+from huggingface_hub import snapshot_download
 from torch.utils.data import Dataset
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from transformers import (
@@ -32,18 +34,19 @@ from transformers import (
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data",       default="scripts/data/ecare_train_final.jsonl")
+    parser.add_argument("--data",       default="scripts/data/ecare_train_v3.jsonl")
     parser.add_argument("--model",      default="Qwen/Qwen2.5-7B-Instruct",
                         help="HuggingFace 模型 ID")
-    parser.add_argument("--output",     default="scripts/output/ecare-lora")
+    parser.add_argument("--output",     default="scripts/output/ecare-lora-v3")
     parser.add_argument("--epochs",     type=int,   default=3)
     parser.add_argument("--batch_size", type=int,   default=1,
-                        help="筆電用 1，4080 用 4")
+                        help="8GB VRAM 用 1")
     parser.add_argument("--grad_accum", type=int,   default=8,
                         help="梯度累積步數，batch_size * grad_accum = 有效 batch size")
     parser.add_argument("--lora_rank",  type=int,   default=16,
-                        help="LoRA rank，筆電用 16，4080 用 32")
-    parser.add_argument("--max_len",    type=int,   default=1024)
+                        help="LoRA rank，8GB 用 16")
+    parser.add_argument("--max_len",    type=int,   default=768,
+                        help="8GB VRAM 用 768，避免溢出到共用記憶體")
     parser.add_argument("--lr",         type=float, default=2e-4)
     return parser.parse_args()
 
@@ -69,6 +72,17 @@ def load_jsonl(path: str) -> list:
     raise ValueError(f"無法讀取 {path}，請確認檔案格式")
 
 
+def resolve_model_source(model_name: str) -> str:
+    """Use a local HF snapshot path when the model is already cached."""
+    if Path(model_name).exists():
+        return model_name
+
+    try:
+        return snapshot_download(repo_id=model_name, local_files_only=True)
+    except Exception:
+        return model_name
+
+
 def format_messages(record: dict, tokenizer) -> str:
     """把 messages 陣列轉成模型的 chat template 格式。"""
     messages = record.get("messages", [])
@@ -83,9 +97,28 @@ class EcareDataset(Dataset):
     def __init__(self, records, tokenizer, max_len):
         self.items = []
         for r in records:
+            messages = r.get("messages", [])
             text = format_messages(r, tokenizer)
             enc = tokenizer(text, truncation=True, max_length=max_len, padding=False)
-            enc["labels"] = enc["input_ids"].copy()
+            input_ids = enc["input_ids"]
+            labels = [-100] * len(input_ids)
+
+            # Only compute loss on assistant response tokens, mask system/user tokens
+            for i, msg in enumerate(messages):
+                if msg["role"] != "assistant":
+                    continue
+                prefix_text = tokenizer.apply_chat_template(
+                    messages[:i], tokenize=False, add_generation_prompt=True
+                )
+                upto_text = tokenizer.apply_chat_template(
+                    messages[:i + 1], tokenize=False, add_generation_prompt=False
+                )
+                prefix_len = len(tokenizer(prefix_text, truncation=True, max_length=max_len, padding=False)["input_ids"])
+                upto_len = len(tokenizer(upto_text, truncation=True, max_length=max_len, padding=False)["input_ids"])
+                for j in range(prefix_len, min(upto_len, len(labels))):
+                    labels[j] = input_ids[j]
+
+            enc["labels"] = labels
             self.items.append(enc)
 
     def __len__(self):
@@ -101,8 +134,13 @@ class EcareDataset(Dataset):
 
 def main():
     args = parse_args()
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    model_source = resolve_model_source(args.model)
 
     print(f"模型：{args.model}")
+    if model_source != args.model:
+        print(f"本機快取：{model_source}")
     print(f"資料：{args.data}")
     print(f"輸出：{args.output}")
     print(f"VRAM：{torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
@@ -118,17 +156,22 @@ def main():
 
     # --- 載入 Tokenizer ---
     print("載入 Tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_source,
+        trust_remote_code=True,
+        local_files_only=True,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # --- 載入模型 ---
     print("載入模型（4-bit 量化）...")
     model = AutoModelForCausalLM.from_pretrained(
-        args.model,
+        model_source,
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
+        local_files_only=True,
     )
     model = prepare_model_for_kbit_training(model)
 
@@ -164,6 +207,9 @@ def main():
         warmup_ratio=0.05,
         fp16=False,
         bf16=True,
+        optim="paged_adamw_8bit",
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=10,
         save_strategy="epoch",
         save_total_limit=2,

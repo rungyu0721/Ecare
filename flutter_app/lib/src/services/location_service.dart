@@ -5,14 +5,16 @@ import 'package:geolocator/geolocator.dart';
 import '../models/location_models.dart';
 
 class LocationService {
-  static const int _maxPositionSamples = 4;
-  static const double _targetAccuracyMeters = 30;
-  static const Duration _samplePause = Duration(milliseconds: 700);
+  static const Duration _cachedPositionMaxAge = Duration(minutes: 3);
+  static const double _cachedPositionMaxAccuracyMeters = 60;
+  static const Duration _positionTimeout = Duration(seconds: 6);
+  static const Duration _placemarkTimeout = Duration(milliseconds: 1500);
+  static const Duration _apiTimeout = Duration(milliseconds: 3500);
 
   final Dio _dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 8),
-      receiveTimeout: const Duration(seconds: 8),
+      connectTimeout: _apiTimeout,
+      receiveTimeout: _apiTimeout,
       headers: <String, String>{
         'User-Agent': 'EcareFlutter/0.1',
         'Accept': 'application/json',
@@ -36,14 +38,14 @@ class LocationService {
       throw Exception('Location permission denied.');
     }
 
-    final position = await _resolveBestPosition();
+    final position = await _resolveFastPosition();
 
     _ResolvedAddress? placemarkAddress;
     try {
       final placemarks = await placemarkFromCoordinates(
         position.latitude,
         position.longitude,
-      );
+      ).timeout(_placemarkTimeout);
       if (placemarks.isNotEmpty) {
         placemarkAddress = _buildAddressFromPlacemark(placemarks.first);
       }
@@ -54,7 +56,7 @@ class LocationService {
     final apiAddress = await _reverseGeocodeFromApi(
       latitude: position.latitude,
       longitude: position.longitude,
-    );
+    ).timeout(_apiTimeout, onTimeout: () => null);
     final resolvedAddress = _pickBestAddress(
       primary: placemarkAddress,
       secondary: apiAddress,
@@ -68,37 +70,27 @@ class LocationService {
     );
   }
 
-  Future<Position> _resolveBestPosition() async {
-    Position best = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.best),
-    );
-
-    if (best.accuracy <= _targetAccuracyMeters) {
-      return best;
+  Future<Position> _resolveFastPosition() async {
+    final cached = await Geolocator.getLastKnownPosition();
+    if (cached != null &&
+        !_isStale(cached.timestamp) &&
+        cached.accuracy <= _cachedPositionMaxAccuracyMeters) {
+      return cached;
     }
 
-    for (var sampleIndex = 1;
-        sampleIndex < _maxPositionSamples;
-        sampleIndex++) {
-      await Future<void>.delayed(_samplePause);
+    return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        timeLimit: _positionTimeout,
+      ),
+    ).timeout(_positionTimeout);
+  }
 
-      try {
-        final candidate = await Geolocator.getCurrentPosition(
-          locationSettings:
-              const LocationSettings(accuracy: LocationAccuracy.best),
-        );
-        if (candidate.accuracy < best.accuracy) {
-          best = candidate;
-        }
-        if (best.accuracy <= _targetAccuracyMeters) {
-          break;
-        }
-      } catch (_) {
-        break;
-      }
+  bool _isStale(DateTime? timestamp) {
+    if (timestamp == null) {
+      return false;
     }
-
-    return best;
+    return DateTime.now().difference(timestamp) > _cachedPositionMaxAge;
   }
 
   Future<_ResolvedAddress?> _reverseGeocodeFromApi({
@@ -120,6 +112,13 @@ class LocationService {
       final data = response.data;
       if (data == null) {
         return null;
+      }
+
+      final displayName = data['display_name'];
+      if (displayName is String &&
+          displayName.trim().isNotEmpty &&
+          _looksSpecificAddress(displayName)) {
+        return _ResolvedAddress(rawLabel: _normalizeDisplayName(displayName));
       }
 
       final address = data['address'];
@@ -173,9 +172,8 @@ class LocationService {
         }
       }
 
-      final displayName = data['display_name'];
       if (displayName is String && displayName.trim().isNotEmpty) {
-        return _ResolvedAddress(rawLabel: displayName.trim());
+        return _ResolvedAddress(rawLabel: _normalizeDisplayName(displayName));
       }
     } catch (_) {
       // Keep falling back to coordinates.
@@ -256,6 +254,50 @@ class LocationService {
     final text = value?.trim();
     if (text == null || text.isEmpty) return false;
     return RegExp(r'^\d+[甲乙丙丁戊己庚辛壬癸]?$').hasMatch(text);
+  }
+
+  bool _looksSpecificAddress(String value) {
+    return RegExp(r'[路街道巷弄號]').hasMatch(value);
+  }
+
+  String _normalizeDisplayName(String value) {
+    final parts = value
+        .split(',')
+        .map((part) => _normalizeAddressPart(part))
+        .whereType<String>()
+        .toList();
+    if (parts.isEmpty) {
+      return value.trim();
+    }
+
+    final countyOrCity = _firstMatching(parts, RegExp(r'[縣市]$'));
+    final districtOrTown = _firstMatching(parts, RegExp(r'[鄉鎮市區]$'));
+    final road = _firstMatching(parts, RegExp(r'[路街道]$'));
+    final houseNumber = _firstMatching(parts, RegExp(r'號$'));
+    final villageOrArea = _firstMatching(parts, RegExp(r'[村里]$'));
+
+    final structured = <String>[
+      if (countyOrCity != null) countyOrCity,
+      if (districtOrTown != null && districtOrTown != countyOrCity)
+        districtOrTown,
+      if (road == null && villageOrArea != null) villageOrArea,
+      if (road != null) road,
+      if (houseNumber != null) houseNumber,
+    ];
+
+    if (structured.isNotEmpty) {
+      return structured.join();
+    }
+    return parts.take(4).toList().reversed.join();
+  }
+
+  String? _firstMatching(List<String> parts, RegExp pattern) {
+    for (final part in parts) {
+      if (pattern.hasMatch(part)) {
+        return part;
+      }
+    }
+    return null;
   }
 
   String? _valueIfCountyOrCity(String? value) {

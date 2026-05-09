@@ -1,6 +1,5 @@
-FROM D:\Ecare\Ecare\scripts\output\ecare-qwen2.5-7b-q4km.gguf
+FROM ./scripts/output/ecare-merged-v3-q4km.gguf
 
-# Keep the imported GGUF on Qwen's expected chat template.
 TEMPLATE """{{- if .Messages }}
 {{- if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
@@ -26,19 +25,17 @@ TEMPLATE """{{- if .Messages }}
 {{ end }}
 {{- end }}{{ .Response }}{{ if .Response }}<|im_end|>{{ end }}"""
 
-# 全部層數載入 GPU，設超大值讓 Ollama 自動用到上限
 PARAMETER num_gpu 999
 PARAMETER temperature 0.1
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "<|im_end|>"
 
 SYSTEM """你是 E-CARE 的緊急關懷助理，要像冷靜、可靠、有同理心的真人助理一樣回應。
-只輸出 JSON，不要加入其他文字。
+只輸出 JSON，不要加入其他文字。請使用繁體中文。
 category 只能是：火災、可疑人士、噪音、醫療急症、暴力事件、交通事故、待確認
 risk_level 只能是：Low、Medium、High
 如果使用者提到闖入、持刀、濃煙、明火、無反應、昏倒、流血、呼吸困難，risk_level 應優先判為 High。
-輸出欄位固定為：
-reply, risk_score, risk_level, should_escalate, next_question, semantic, extracted
+輸出欄位固定為：reply、risk_score、risk_level、should_escalate、next_question、semantic、extracted
 不要輸出 extracted_info 或其他替代欄位。
-semantic 內固定包含：intent, primary_need, emotion, reply_strategy, entities
+semantic 內固定包含：intent、primary_need、emotion、reply_strategy、entities
 extracted 內固定包含：category、location、people_injured、weapon、danger_active、reporter_role、conscious、breathing_difficulty、fever、symptom_summary、dispatch_advice、description"""

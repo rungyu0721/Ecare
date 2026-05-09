@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app.dart';
+import '../models/location_models.dart';
 import '../models/user_profile.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
@@ -34,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isHolding = false;
   double _holdProgress = 0;
   Future<void>? _locationFetchTask;
+  LocationSnapshot? _currentLocation;
 
   @override
   void initState() {
@@ -87,8 +89,9 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final location = await _locationService.getCurrentLocation();
-      final locationText = location.toDisplayText();
+      final location =
+          _currentLocation ?? await _locationService.getCurrentLocation();
+      final locationText = _locationDisplayText(location);
 
       await _apiService.createReport(
         title: '\u7dca\u6025\u901a\u5831',
@@ -107,7 +110,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       setState(() {
-        _locationText = locationText;
+        _currentLocation = location;
+        _locationText = _locationDisplayText(location);
         _statusText = '\u7dca\u6025\u901a\u5831\u5df2\u9001\u51fa';
         _resultText =
             '\u7cfb\u7d71\u5df2\u5efa\u7acb\u4e00\u7b46\u9ad8\u98a8\u96aa\u901a\u5831\uff0c\u82e5\u60c5\u6cc1\u5371\u6025\uff0c\u8acb\u7acb\u5373\u64a5\u6253 110 \u6216 119\u3002';
@@ -161,7 +165,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
       setState(() {
-        _locationText = location.toDisplayText();
+        _currentLocation = location;
+        _locationText = _locationDisplayText(location);
         _statusText = '\u5df2\u66f4\u65b0\u4f4d\u7f6e';
       });
     } catch (error) {
@@ -174,6 +179,20 @@ class _HomeScreenState extends State<HomeScreen> {
             '\u5b9a\u4f4d\u5931\u6557\uff0c\u8acb\u78ba\u8a8d\u88dd\u7f6e\u5df2\u958b\u555f\u5b9a\u4f4d\u8207\u6b0a\u9650\u3002';
       });
     }
+  }
+
+  String _locationDisplayText(LocationSnapshot location) {
+    final address = location.address?.trim();
+    if (address != null && address.isNotEmpty) {
+      final suffix = _isSpecificAddress(address) ? '' : '\u9644\u8fd1';
+      return '$address$suffix (+/- ${location.accuracy.round()}m)';
+    }
+
+    return location.toDisplayText();
+  }
+
+  bool _isSpecificAddress(String address) {
+    return RegExp(r'[路街道巷弄號]').hasMatch(address);
   }
 
   Future<void> _handleEmergencyPress() async {

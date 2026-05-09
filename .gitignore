@@ -30,3 +30,20 @@ flutter_app/.flutter-plugins
 flutter_app/.flutter-plugins-dependencies
 flutter_app/.metadata
 flutter_app/.idea/
+
+# 訓練相關腳本（開發中，暫不追蹤）
+scripts/audit_training_data.py
+scripts/clean_training_data.py
+scripts/merge_lora.py
+scripts/test_lora_inference.py
+scripts/data/
+
+# 下載的 wheel 檔
+*.whl
+
+# 訓練 log
+training.log
+nohup.out
+
+# HuggingFace 快取
+.cache/

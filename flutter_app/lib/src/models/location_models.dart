@@ -16,8 +16,14 @@ class LocationSnapshot {
     if (addressText != null && addressText.isNotEmpty) {
       return '$addressText (+/- ${accuracy.round()}m)';
     }
-    return '${latitude.toStringAsFixed(6)}, '
-        '${longitude.toStringAsFixed(6)} '
-        '(+/- ${accuracy.round()}m)';
+    return '已取得目前位置 (+/- ${accuracy.round()}m)';
+  }
+
+  String toReportLocationText() {
+    final addressText = address?.trim();
+    if (addressText != null && addressText.isNotEmpty) {
+      return '$addressText (+/- ${accuracy.round()}m)';
+    }
+    return '已取得目前位置';
   }
 }
