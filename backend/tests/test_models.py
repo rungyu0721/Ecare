@@ -115,6 +115,45 @@ def test_chat_request_with_session():
 
 
 # ======================
+# ChatResponse — 新欄位預設值
+# ======================
+
+def test_chat_response_new_fields_default():
+    resp = ChatResponse(
+        reply="收到",
+        risk_score=0.3,
+        risk_level="Low",
+        should_escalate=False,
+        next_question=None,
+        extracted=Extracted(),
+        semantic=SemanticUnderstanding(),
+    )
+    assert resp.should_speak is False
+    assert resp.voice_prompt is None
+    assert resp.voice_priority is None
+    assert resp.report_status_hint is None
+
+
+def test_chat_response_high_risk_fields():
+    resp = ChatResponse(
+        reply="高風險",
+        risk_score=0.95,
+        risk_level="High",
+        should_escalate=True,
+        next_question="請確認呼吸",
+        extracted=Extracted(category="醫療急症", conscious=False),
+        semantic=SemanticUnderstanding(),
+        voice_prompt="系統已列為高風險通報。請確認患者呼吸。",
+        voice_priority="high",
+        should_speak=True,
+        report_status_hint="high_risk_detected",
+    )
+    assert resp.should_speak is True
+    assert resp.voice_priority == "high"
+    assert resp.report_status_hint == "high_risk_detected"
+
+
+# ======================
 # ReportCreate
 # ======================
 

@@ -43,7 +43,6 @@ from backend.services.extraction import (
     simple_extract,
 )
 from backend.services.llm import (
-    COMPACT_LOCAL_LLM_MAX_TOKENS as _COMPACT_TOKENS,
     call_llm,
     llm_is_ready,
     parse_llm_json_text,
@@ -942,6 +941,70 @@ _EMPTY_CONTEXT_RESPONSE = ChatResponse(
 )
 
 
+def _build_voice_fields(
+    ex: Extracted,
+    risk_level: str,
+    should_escalate: bool,
+) -> tuple:
+    """產生語音播報欄位 (voice_prompt, voice_priority, should_speak)。
+
+    只在高風險或需立即行動時啟用。voice_prompt 設計為短句，適合 TTS 朗讀。
+    """
+    is_immediate = (
+        (ex.category == "醫療急症" and (ex.conscious is False or ex.breathing_difficulty is True))
+        or (ex.category in ["暴力事件", "可疑人士"] and ex.weapon is True)
+        or (ex.category == "火災" and ex.danger_active is True)
+    )
+    should_speak = bool(should_escalate or risk_level == "High" or is_immediate)
+    if not should_speak:
+        return None, None, False
+
+    cat = ex.category or ""
+    if cat == "醫療急症":
+        if ex.conscious is False or ex.breathing_difficulty is True:
+            prompt = "系統已列為高風險通報。請確認患者是否有正常呼吸；如果沒有，請準備依救援指示開始 CPR。"
+            priority = "high"
+        else:
+            prompt = "系統已列為高風險通報。請保持手機可接通，持續觀察患者狀況。"
+            priority = "high"
+    elif cat == "火災":
+        prompt = "系統已列為高風險通報。請立即疏散，遠離濃煙，保持低姿勢。"
+        priority = "high"
+    elif cat in ["暴力事件", "可疑人士"]:
+        if ex.weapon is True:
+            prompt = "系統已列為高風險通報。請立即撤離至安全位置，不要靠近現場。"
+            priority = "high"
+        else:
+            prompt = "系統已列為高風險通報。請確認自身安全，保持手機可接通。"
+            priority = "medium"
+    elif cat == "交通事故":
+        prompt = "系統已列為高風險通報。請確認是否有人受傷，並確保現場安全。"
+        priority = "medium"
+    else:
+        prompt = "系統已列為高風險通報。請保持手機可接通。"
+        priority = "medium"
+
+    return prompt, priority, True
+
+
+def _build_report_status_hint(
+    ex: Extracted,
+    risk_level: str,
+    should_escalate: bool,
+) -> str:
+    """回傳通報狀態提示字串，前端可用於 UI 或狀態列。
+
+    目前不實際建立通報，故不回 report_created。
+    """
+    if risk_level == "High" or should_escalate:
+        if ex.location and ex.category and ex.category not in ("待確認", None):
+            return "report_recommended"
+        return "high_risk_detected"
+    if risk_level == "Medium":
+        return "monitoring"
+    return "none"
+
+
 def process_chat_request(
     messages: List[ChatMessage],
     audio_context: Optional[Dict[str, Any]] = None,
@@ -1034,6 +1097,7 @@ def process_chat_request(
             reply_changed=reply != llm_reply,
             next_question_changed=nq != llm_nq,
         )
+        voice_prompt, voice_priority, should_speak = _build_voice_fields(ex, risk_level, should_escalate)
         return ChatResponse(
             reply=reply,
             risk_score=risk_score,
@@ -1042,6 +1106,10 @@ def process_chat_request(
             next_question=nq,
             extracted=ex,
             semantic=semantic,
+            voice_prompt=voice_prompt,
+            voice_priority=voice_priority,
+            should_speak=should_speak,
+            report_status_hint=_build_report_status_hint(ex, risk_level, should_escalate),
         )
 
     except Exception as e:
@@ -1084,12 +1152,18 @@ def process_chat_request(
             "final_fallback", latest_text, ex, semantic, dialogue_state,
             reply, nq, level, score,
         )
+        escalate = (level == "High")
+        voice_prompt, voice_priority, should_speak = _build_voice_fields(ex, level, escalate)
         return ChatResponse(
             reply=reply,
             risk_score=score,
             risk_level=level,
-            should_escalate=(level == "High"),
+            should_escalate=escalate,
             next_question=nq,
             extracted=ex,
             semantic=semantic,
+            voice_prompt=voice_prompt,
+            voice_priority=voice_priority,
+            should_speak=should_speak,
+            report_status_hint=_build_report_status_hint(ex, level, escalate),
         )

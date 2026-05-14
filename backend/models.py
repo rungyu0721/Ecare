@@ -94,6 +94,11 @@ class ChatResponse(BaseModel):
     next_question: Optional[str]
     extracted: Extracted
     semantic: SemanticUnderstanding
+    # v4.1：語音播報與通報狀態提示（前端選用）
+    voice_prompt: Optional[str] = None
+    voice_priority: Optional[str] = None   # "low" / "medium" / "high"
+    should_speak: bool = False
+    report_status_hint: Optional[str] = None  # "none" / "monitoring" / "high_risk_detected" / "report_recommended" / "report_created" / "waiting_for_update"
 
 
 # ======================
