@@ -14,6 +14,8 @@ from backend.services.risk import (
     has_active_violence_emergency,
     has_acute_medical_signal,
     has_aggressive_disturbance_signal,
+    has_child_distress_signal,
+    has_child_unresponsive_signal,
     has_critical_injury_signal,
     has_disturbance_signal,
     has_medical_urgency_signal,
@@ -31,6 +33,11 @@ from .location import (
     normalize_location_candidate,
 )
 from backend.services.incident_taxonomy import match_incident_taxonomy
+from backend.services.v4_event_semantics import (
+    apply_v4_slot_hints,
+    best_category_from_text,
+    contains_negated,
+)
 
 
 # ======================
@@ -53,38 +60,62 @@ def infer_reporter_role(text: str) -> Optional[str]:
     if not normalized:
         return None
 
-    self_markers = ["我發燒", "我不舒服", "我胸痛", "我喘不過氣", "我呼吸困難", "我昏倒", "我受傷"]
-    other_markers = [
-        "他", "她", "對方", "有人", "我朋友", "我同學", "我家人",
-        "我爸", "我媽", "我先生", "我太太", "我兒子", "我女兒",
+    self_victim_markers = [
+        "打我", "追我", "堵我", "威脅我", "闖進我", "我被打", "我被搶",
+        "我被追", "我被威脅", "我被困", "我躲", "我逃", "我出不去",
+        "在打我", "對我動手", "把我推", "我受傷", "我流血",
     ]
+    self_medical_markers = [
+        "我發燒", "我不舒服", "我胸痛", "我喘不過氣", "我呼吸困難",
+        "我昏倒", "我暈倒", "我暈過去", "我倒下", "我頭暈", "我嘔吐",
+    ]
+    witness_markers = ["我看到", "我聽到", "目擊", "隔壁", "樓上", "樓下", "鄰居", "旁邊"]
+    caregiver_markers = [
+        "我爸", "我媽", "爸爸", "媽媽", "爺爺", "奶奶", "阿公", "阿嬤",
+        "我先生", "我太太", "我老婆", "我老公", "我兒子", "我女兒",
+        "我小孩", "我的孩子", "家人",
+    ]
+    third_party_markers = ["他", "她", "對方", "有人", "朋友", "同學", "同事", "我朋友", "我同學"]
 
-    if any(marker in normalized for marker in self_markers):
+    if any(marker in normalized for marker in self_victim_markers):
+        return "本人受害"
+    if any(marker in normalized for marker in self_medical_markers):
         return "本人"
-    if any(marker in normalized for marker in other_markers):
+    if any(marker in normalized for marker in witness_markers):
+        return "旁觀者"
+    if any(marker in normalized for marker in caregiver_markers):
+        return "照顧者/家屬"
+    if any(marker in normalized for marker in third_party_markers):
         return "代他人通報"
     return None
 
 
 def subject_reference(ex: Extracted) -> str:
-    return "你" if ex.reporter_role == "本人" else "對方"
+    return "你" if ex.reporter_role in ["本人", "本人受害"] else "對方"
 
 
 def subject_possessive_reference(ex: Extracted) -> str:
-    return "你的" if ex.reporter_role == "本人" else "對方的"
+    return "你的" if ex.reporter_role in ["本人", "本人受害"] else "對方的"
 
 
 def collect_symptoms(text: str) -> List[str]:
     symptom_pairs = [
         ("發燒", "發燒"), ("高燒", "高燒"), ("呼吸困難", "呼吸困難"),
-        ("喘不過氣", "喘不過氣"), ("胸痛", "胸痛"), ("抽搐", "抽搐"),
-        ("昏倒", "昏倒"), ("失去意識", "失去意識"), ("意識不清", "意識不清"),
+        ("喘不過氣", "喘不過氣"), ("吸不到氣", "吸不到氣"), ("很喘", "很喘"),
+        ("胸痛", "胸痛"), ("胸悶", "胸悶"), ("心臟痛", "心臟痛"), ("抽搐", "抽搐"),
+        ("昏倒", "昏倒"), ("暈倒", "暈倒"), ("暈過去", "暈過去"), ("倒下", "倒下"),
+        ("失去意識", "失去意識"), ("意識不清", "意識不清"),
+        ("半邊無力", "半邊無力"), ("嘴歪", "嘴歪"), ("講話不清楚", "講話不清楚"),
         ("頭暈", "頭暈"), ("嘔吐", "嘔吐"), ("流血", "流血"), ("受傷", "受傷"),
+        ("燙傷", "燙傷"), ("燒傷", "燒傷"), ("灼傷", "灼傷"), ("燙到", "燙傷"),
+        ("燒到", "燒傷"), ("水泡", "水泡"),
         ("小擦傷", "擦傷"), ("擦傷", "擦傷"), ("小傷口", "小傷口"),
         ("輕傷", "輕傷"), ("咳", "咳嗽"),
     ]
     symptoms: List[str] = []
     for keyword, label in symptom_pairs:
+        if label == "水泡" and any(term in text for term in ["沒有起水泡", "沒起水泡", "沒有水泡", "沒水泡"]):
+            continue
         if keyword in text and label not in symptoms:
             symptoms.append(label)
     return symptoms
@@ -101,12 +132,34 @@ def merge_symptom_summary(existing: Optional[str], incoming: Optional[str]) -> O
     return "、".join(tokens) if tokens else (incoming or existing)
 
 
+def has_burn_symptom(ex: Extracted) -> bool:
+    symptom_summary = ex.symptom_summary or ""
+    return any(token in symptom_summary for token in ["燙傷", "燒傷", "灼傷", "水泡"])
+
+
+def is_mild_burn_text(text: str) -> bool:
+    return any(token in text for token in ["紅紅", "沒有起水泡", "沒起水泡", "沒有水泡", "沒水泡", "輕微燙傷", "輕微燒傷"])
+
+
+def burn_dispatch_advice(text: str, ex: Extracted) -> Optional[str]:
+    if ex.category != "醫療急症" or not has_burn_symptom(ex):
+        return None
+    if is_mild_burn_text(text):
+        return "建議處置：先冷水沖洗並觀察；若範圍大、起水泡或疼痛加劇再就醫/119"
+    return "建議處置：冷水沖洗並評估嚴重度；嚴重燒燙傷請立刻就醫或撥 119"
+
+
 # ======================
 # 醫療回應腳本
 # ======================
 
 def build_medical_acknowledgement(ex: Extracted, text: str) -> str:
     ref = subject_reference(ex)
+    symptom_summary = ex.symptom_summary or ""
+    if any(token in symptom_summary for token in ["燙傷", "燒傷", "灼傷", "水泡"]):
+        if any(token in text for token in ["沒有起水泡", "沒起水泡", "沒有水泡", "沒水泡", "紅紅"]):
+            return f"收到，{ref}目前像是較輕微的燒燙傷，我先幫你確認是否需要進一步處理。"
+        return f"收到，{ref}有燒燙傷狀況，我先幫你確認範圍和嚴重程度。"
     if ex.conscious is True and ex.breathing_difficulty is True:
         return f"收到，{ref}目前意識清楚，但有呼吸困難等急性症狀，需要優先留意。"
     if ex.conscious is False:
@@ -124,10 +177,18 @@ def medical_follow_up_question(ex: Extracted, risk_level: str) -> str:
     ref = subject_reference(ex)
     symptom_summary = ex.symptom_summary or ""
 
+    if any(token in symptom_summary for token in ["燙傷", "燒傷", "灼傷", "水泡"]):
+        if risk_level == "High":
+            return f"請先讓{ref}離開熱源並撥打 119；如果安全，先用流動清水沖洗燙傷處，不要刺破水泡或撕黏住的衣物。"
+        return f"請先用流動清水沖洗燙傷處至少 10 分鐘。燙傷面積大嗎？有水泡、皮膚焦黑或發白，或在臉、手掌、關節附近嗎？"
     if ex.conscious is True and any(token in symptom_summary for token in ["擦傷", "小傷口", "輕傷"]):
         return f"{ref}傷口現在有持續流血、需要止血包紮，或還有頭暈、想吐、明顯疼痛加重嗎？"
-    if ex.breathing_difficulty is True or ex.conscious is False or risk_level == "High":
+    if ex.conscious is False:
+        return f"{ref}目前沒有反應，請立刻撥打 119；如果你能安全靠近，請確認胸口是否有起伏或有沒有正常呼吸。"
+    if ex.breathing_difficulty is True:
         return f"{ref}現在能正常說完整句子嗎？症狀有在加重，或需要立刻送醫嗎？如果越來越喘，請立刻撥 119。"
+    if risk_level == "High":
+        return f"{ref}現在最危急的症狀是什麼？如果有胸痛、喘不過氣、昏倒或意識不清，請立刻撥 119。"
     return f"除了目前提到的症狀外，{ref}還有發燒、胸痛、嘔吐，或其他不舒服正在加重嗎？"
 
 
@@ -142,10 +203,10 @@ def enrich_extracted_details(ex: Extracted, text: str) -> Extracted:
 
     if any(keyword in text for keyword in ["意識清楚", "意識清醒", "人是清醒的", "目前清醒", "叫得醒"]):
         ex.conscious = True
-    elif any(keyword in text for keyword in ["意識不清", "昏迷", "失去意識", "叫不醒"]):
+    elif any(keyword in text for keyword in ["意識不清", "昏迷", "失去意識", "叫不醒", "沒反應", "沒有反應", "無反應", "暈過去", "昏過去"]):
         ex.conscious = False
 
-    if any(keyword in text for keyword in ["呼吸困難", "喘不過氣", "沒辦法呼吸", "呼吸很喘"]):
+    if any(keyword in text for keyword in ["呼吸困難", "喘不過氣", "吸不到氣", "沒辦法呼吸", "呼吸很喘", "很喘", "沒呼吸", "沒有呼吸", "快沒氣"]):
         ex.breathing_difficulty = True
     elif any(keyword in text for keyword in ["呼吸正常", "沒有呼吸困難", "沒有喘", "呼吸沒問題", "看起來呼吸正常"]):
         ex.breathing_difficulty = False
@@ -185,22 +246,20 @@ def simple_extract(text: str) -> Extracted:
     has_violence_signal = any(keyword in text for keyword in VIOLENCE_SIGNAL_KEYWORDS)
     has_child_protection_signal = (
         any(k in text for k in ["家暴", "虐待", "受虐", "打小孩", "打罵", "摔東西", "砸東西"])
-        or (
-            any(k in text for k in ["小孩", "孩子", "兒童", "幼童", "嬰兒"])
-            and any(k in text for k in ["哀號", "哭叫", "尖叫", "求救", "慘叫", "一直哭"])
-        )
-        or (
-            any(k in text for k in ["隔壁", "樓上", "樓下", "鄰居"])
-            and any(k in text for k in ["哀號", "哭叫", "尖叫", "求救", "慘叫", "一直哭"])
-        )
+        or has_child_distress_signal(text)
     )
 
-    if taxonomy_match and taxonomy_match.get("app_category"):
+    v4_category = best_category_from_text(text)
+    if v4_category in ["交通事故", "可疑人士"]:
+        ex.category = v4_category
+    elif taxonomy_match and taxonomy_match.get("app_category"):
         ex.category = taxonomy_match["app_category"]
         subtype = taxonomy_match.get("subtype")
         if subtype:
             ex.symptom_summary = f"疑似{subtype}"
-    elif any(k in text for k in ["火災", "失火", "著火", "起火", "冒煙", "燒起來"]):
+    elif v4_category:
+        ex.category = v4_category
+    elif any(k in text for k in ["火災", "失火", "著火", "起火", "冒煙", "濃煙", "煙很大", "燒起來"]):
         ex.category = "火災"
     elif has_child_protection_signal or has_violence_signal or (
         has_aggressive_disturbance
@@ -211,23 +270,37 @@ def simple_extract(text: str) -> Extracted:
         ex.category = "可疑人士"
     elif has_disturbance:
         ex.category = "噪音"
-    elif any(k in text for k in ["昏倒", "流血", "受傷", "沒呼吸", "抽搐", "心臟痛", "頭暈", "胸痛", "呼吸困難", "喘不過氣", "不舒服", "發燒", "嘔吐"]):
-        ex.category = "醫療急症"
-    elif any(k in text for k in ["車禍", "撞車", "翻車", "追撞"]):
+    elif any(k in text for k in ["車禍", "撞車", "翻車", "追撞", "被車撞", "撞到人", "機車倒", "汽車撞"]):
         ex.category = "交通事故"
+    elif any(k in text for k in ["昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "心臟痛", "胸悶", "半邊無力", "嘴歪", "講話不清楚", "頭暈", "胸痛", "呼吸困難", "喘不過氣", "吸不到氣", "不舒服", "發燒", "嘔吐"]):
+        ex.category = "醫療急症"
     else:
         ex.category = "待確認"
 
-    if any(k in text for k in ["流血", "受傷", "昏倒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "呼吸困難", "喘不過氣", "嘔吐"]):
+    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐"]
+    if contains_negated(text, ["受傷", "流血", "水泡", "昏倒", "呼吸困難", "嘔吐"]):
+        ex.people_injured = False
+    elif any(k in text for k in injury_terms):
         ex.people_injured = True
     else:
         ex.people_injured = None
 
-    ex.weapon = True if any(k in text for k in ["刀", "槍", "武器", "棍棒"]) else None
-    ex.danger_active = True if has_child_protection_signal or any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場"]) else None
+    if contains_negated(text, ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]):
+        ex.weapon = False
+    else:
+        ex.weapon = True if any(k in text for k in ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]) else None
+    ex.danger_active = True if has_child_protection_signal or any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場", "追人", "追我", "揮刀", "攻擊中"]) else None
+    if has_child_unresponsive_signal(text):
+        ex.conscious = False
+        ex.people_injured = True
+        ex.danger_active = True
     ex.location = extract_location_from_text(text)
     ex = enrich_extracted_details(ex, text)
-    if taxonomy_match and taxonomy_match.get("advice"):
+    ex = apply_v4_slot_hints(text, ex)
+    burn_advice = burn_dispatch_advice(text, ex)
+    if burn_advice:
+        ex.dispatch_advice = burn_advice
+    elif taxonomy_match and taxonomy_match.get("advice"):
         ex.dispatch_advice = taxonomy_match["advice"]
     else:
         ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
@@ -315,6 +388,7 @@ def apply_turn_context(messages: List[ChatMessage], ex: Extracted) -> Extracted:
             ex.location = extracted_location
 
     ex = enrich_extracted_details(ex, latest_user_text_val)
+    ex = apply_v4_slot_hints(latest_user_text_val, ex)
 
     latest_turn_extracted = simple_extract(latest_user_text_val) if latest_user_text_val else Extracted()
     if ex.category == "待確認" and latest_turn_extracted.category not in [None, "待確認"]:

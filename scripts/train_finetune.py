@@ -3,10 +3,12 @@
 E-CARE Fine-tune 訓練腳本（HuggingFace PEFT + QLoRA）
 
 用法：
-    python scripts/train_finetune.py --data scripts/data/ecare_train_final.jsonl
+    python scripts/train_finetune.py --data scripts/data/ecare_train_v4_final.jsonl
 
 筆電（8GB VRAM）：使用預設參數即可
 桌機 4080（16GB VRAM）：加上 --batch_size 4 --lora_rank 32
+
+v4 注意：資料含 3 輪對話，max_len 預設提升至 1024
 """
 
 import argparse
@@ -34,10 +36,10 @@ from transformers import (
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data",       default="scripts/data/ecare_train_v3.jsonl")
+    parser.add_argument("--data",       default="scripts/data/ecare_train_v4_final.jsonl")
     parser.add_argument("--model",      default="Qwen/Qwen2.5-7B-Instruct",
                         help="HuggingFace 模型 ID")
-    parser.add_argument("--output",     default="scripts/output/ecare-lora-v3")
+    parser.add_argument("--output",     default="scripts/output/ecare-lora-v4")
     parser.add_argument("--epochs",     type=int,   default=3)
     parser.add_argument("--batch_size", type=int,   default=1,
                         help="8GB VRAM 用 1")
@@ -45,8 +47,8 @@ def parse_args():
                         help="梯度累積步數，batch_size * grad_accum = 有效 batch size")
     parser.add_argument("--lora_rank",  type=int,   default=16,
                         help="LoRA rank，8GB 用 16")
-    parser.add_argument("--max_len",    type=int,   default=768,
-                        help="8GB VRAM 用 768，避免溢出到共用記憶體")
+    parser.add_argument("--max_len",    type=int,   default=1024,
+                        help="v4 三輪對話約 1000–1100 tokens，建議 1024；8GB VRAM 如有 OOM 可降至 896")
     parser.add_argument("--lr",         type=float, default=2e-4)
     return parser.parse_args()
 

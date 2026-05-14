@@ -120,6 +120,36 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _sendQuickReply(String text) async {
+    if (_isSending || _isRecording || _isProcessingAudio) {
+      return;
+    }
+
+    await _sendMessage(
+      backendText: text,
+      timelineItem: _ChatTimelineItem.text(role: 'user', content: text),
+    );
+  }
+
+  String _inputHintText() {
+    final response = _latestResponse;
+    if (response == null) {
+      return '請輸入目前發生的狀況...';
+    }
+
+    final category = response.extracted.category?.trim() ?? '';
+    final hasConfirmedIncident = category.isNotEmpty &&
+        category != '待確認' &&
+        category != '一般事件';
+    final needsOngoingUpdate =
+        hasConfirmedIncident || response.riskLevel != 'Low' || response.riskScore >= 0.5;
+
+    if (needsOngoingUpdate) {
+      return '回報現場新的變化...';
+    }
+    return '請輸入目前發生的狀況...';
+  }
+
   Future<bool> _sendMessage({
     required String backendText,
     required _ChatTimelineItem timelineItem,
@@ -201,10 +231,11 @@ class _ChatScreenState extends State<ChatScreen> {
         _removePendingAssistantMessage();
       });
 
-      await _appendAssistantMessageAnimated(response.reply);
-      if (_shouldAppendNextQuestion(response.reply, response.nextQuestion)) {
-        await _appendAssistantMessageAnimated(response.nextQuestion!);
-      }
+      final nextQ = response.nextQuestion;
+      final showNext = _shouldAppendNextQuestion(response.reply, nextQ);
+      final combined =
+          showNext && nextQ != null ? '${response.reply}\n\n$nextQ' : response.reply;
+      await _appendAssistantMessageAnimated(combined);
 
       _scrollToBottom();
 
@@ -249,9 +280,9 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    final alreadyShown = _history.any(
-      (m) => m.role == 'assistant' && m.content.trim() == text,
-    );
+    final alreadyShown = _timeline.isNotEmpty &&
+        _timeline.last.role == 'assistant' &&
+        (_timeline.last.content ?? '').trim() == text;
     if (alreadyShown || !mounted) {
       return;
     }
@@ -315,6 +346,10 @@ class _ChatScreenState extends State<ChatScreen> {
       return false;
     }
 
+    if (_hasSimilarQuestion(reply, next)) {
+      return false;
+    }
+
     return true;
   }
 
@@ -332,6 +367,52 @@ class _ChatScreenState extends State<ChatScreen> {
         .replaceAll('你', '')
         .replaceAll('是否', '')
         .trim();
+  }
+
+  bool _hasSimilarQuestion(String reply, String nextQuestion) {
+    final questions = RegExp(r'[^。！？!?]+[？?]')
+        .allMatches(reply)
+        .map((match) => match.group(0)?.trim() ?? '')
+        .where((text) => text.isNotEmpty);
+    return questions.any((question) {
+      final replyTopics = _questionTopics(question);
+      final nextTopics = _questionTopics(nextQuestion);
+      final overlap = replyTopics.intersection(nextTopics);
+      if (overlap.length >= 2 || overlap.contains('detail')) {
+        return true;
+      }
+      if (overlap.contains('disturbance') &&
+          (replyTopics.contains('ongoing') || nextTopics.contains('ongoing'))) {
+        return true;
+      }
+      if (overlap.contains('danger') &&
+          (replyTopics.contains('ongoing') || nextTopics.contains('ongoing'))) {
+        return true;
+      }
+      return false;
+    });
+  }
+
+  Set<String> _questionTopics(String text) {
+    final normalized = text.replaceAll(RegExp(r'[\s，,。！？!?、：:；;（）()「」『』]+'), '');
+    final topicGroups = <String, List<String>>{
+      'location': <String>['地點', '位置', '在哪', '哪裡', '地址', '路口'],
+      'injury': <String>['受傷', '傷者', '流血', '送醫', '救護車'],
+      'weapon': <String>['武器', '刀', '槍', '棍棒', '持刀'],
+      'danger': <String>['危險', '威脅', '攻擊', '衝突', '靠近', '追', '還在現場'],
+      'ongoing': <String>['持續', '還在', '仍在', '沒有停', '現在還', '平靜', '緩和', '停下'],
+      'disturbance': <String>['吵架', '爭吵', '吵鬧', '噪音', '大叫', '吼叫', '摔東西'],
+      'breathing': <String>['呼吸', '喘', '沒呼吸', '吸不到氣'],
+      'conscious': <String>['意識', '反應', '叫得醒', '叫不醒', '清醒'],
+      'fire': <String>['火', '火勢', '濃煙', '冒煙', '燃燒'],
+      'traffic': <String>['車禍', '車道', '車流', '撞', '事故'],
+      'detail': <String>['狀況', '發生什麼', '補充', '描述', '看到', '聽到'],
+    };
+
+    return topicGroups.entries
+        .where((entry) => entry.value.any(normalized.contains))
+        .map((entry) => entry.key)
+        .toSet();
   }
 
   Future<void> _openRecords() async {
@@ -625,6 +706,263 @@ class _ChatScreenState extends State<ChatScreen> {
     return EcareApp.muted;
   }
 
+  List<_IncidentStatusPill> _incidentStatusPills() {
+    final response = _latestResponse;
+    if (response == null || !_hasActionableIncident(response)) {
+      return const <_IncidentStatusPill>[];
+    }
+
+    final extracted = response.extracted;
+    final items = <_IncidentStatusPill>[
+      _IncidentStatusPill(
+        icon: Icons.category_outlined,
+        label: '\u985e\u578b',
+        value: _fallbackText(extracted.category, '\u5f85\u78ba\u8a8d'),
+      ),
+      _IncidentStatusPill(
+        icon: Icons.location_on_outlined,
+        label: '\u5730\u9ede',
+        value: _preferredLocationText(extracted.location),
+      ),
+      _IncidentStatusPill(
+        icon: Icons.warning_amber_rounded,
+        label: '\u72c0\u614b',
+        value: _dangerStatusText(extracted.dangerActive),
+      ),
+    ];
+
+    if (extracted.peopleInjured != null) {
+      items.add(
+        _IncidentStatusPill(
+          icon: Icons.medical_services_outlined,
+          label: '\u50b7\u8005',
+          value: extracted.peopleInjured!
+              ? '\u6709\u4eba\u53d7\u50b7'
+              : '\u672a\u767c\u73fe\u50b7\u8005',
+        ),
+      );
+    }
+
+    if (extracted.weapon != null) {
+      items.add(
+        _IncidentStatusPill(
+          icon: Icons.report_problem_outlined,
+          label: '\u5371\u96aa\u7269',
+          value: extracted.weapon!
+              ? '\u7591\u4f3c\u6709\u6b66\u5668'
+              : '\u672a\u63d0\u5230\u6b66\u5668',
+        ),
+      );
+    }
+
+    return items;
+  }
+
+  String _fallbackText(String? value, String fallback) {
+    final trimmed = value?.trim() ?? '';
+    return trimmed.isEmpty ? fallback : trimmed;
+  }
+
+  String _dangerStatusText(bool? dangerActive) {
+    if (dangerActive == true) {
+      return '\u6301\u7e8c\u4e2d';
+    }
+    if (dangerActive == false) {
+      return '\u5df2\u7de9\u548c';
+    }
+    return '\u672a\u78ba\u8a8d';
+  }
+
+  List<_QuickReplyAction> _quickReplyActions() {
+    final response = _latestResponse;
+    if (response == null || !_hasActionableIncident(response)) {
+      return const <_QuickReplyAction>[];
+    }
+
+    final category = response.extracted.category ?? '';
+    final isHighRisk = response.riskLevel == 'High' || response.shouldEscalate;
+    final isMedical = category.contains('\u91ab\u7642');
+    final isViolenceOrNoise =
+        category.contains('\u66b4\u529b') || category.contains('\u566a\u97f3');
+    final isFire = category.contains('\u706b\u707d');
+    final isChildConcern = _containsChildConcern(_latestUserText());
+
+    if (isHighRisk) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.shield_outlined, '\u6211\u5df2\u9060\u96e2'),
+        _QuickReplyAction(
+            Icons.medical_services_outlined, '\u6709\u4eba\u53d7\u50b7'),
+        _QuickReplyAction(
+            Icons.report_problem_outlined, '\u770b\u5230\u6b66\u5668'),
+        _QuickReplyAction(
+            Icons.phone_in_talk_outlined, '\u5df2\u64a5\u6253 110'),
+      ];
+    }
+
+    if (isChildConcern) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.child_care_outlined, '\u9084\u5728\u54ed'),
+        _QuickReplyAction(
+            Icons.record_voice_over_outlined, '\u807d\u5230\u6253\u7f75'),
+        _QuickReplyAction(
+            Icons.medical_services_outlined, '\u6c92\u53cd\u61c9'),
+        _QuickReplyAction(
+            Icons.apartment_outlined, '\u5df2\u901a\u77e5\u7ba1\u7406\u54e1'),
+      ];
+    }
+
+    if (isMedical) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(
+            Icons.visibility_outlined, '\u610f\u8b58\u6e05\u695a'),
+        _QuickReplyAction(Icons.air_outlined, '\u547c\u5438\u56f0\u96e3'),
+        _QuickReplyAction(
+            Icons.medical_services_outlined, '\u75c7\u72c0\u8b8a\u56b4\u91cd'),
+        _QuickReplyAction(Icons.help_outline, '\u4e0d\u78ba\u5b9a'),
+      ];
+    }
+
+    if (isFire) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(
+            Icons.directions_run_outlined, '\u5df2\u96e2\u958b\u73fe\u5834'),
+        _QuickReplyAction(Icons.smoke_free_outlined, '\u6709\u6fc3\u7159'),
+        _QuickReplyAction(
+            Icons.group_outlined, '\u9084\u6709\u4eba\u5728\u88e1\u9762'),
+        _QuickReplyAction(Icons.help_outline, '\u4e0d\u78ba\u5b9a'),
+      ];
+    }
+
+    if (isViolenceOrNoise || response.riskLevel == 'Medium') {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.volume_up_outlined, '\u53ea\u662f\u5435\u67b6'),
+        _QuickReplyAction(
+            Icons.broken_image_outlined, '\u6709\u6454\u6771\u897f'),
+        _QuickReplyAction(
+            Icons.record_voice_over_outlined, '\u6709\u4eba\u6c42\u6551'),
+        _QuickReplyAction(
+            Icons.medical_services_outlined, '\u770b\u5230\u53d7\u50b7'),
+        _QuickReplyAction(Icons.help_outline, '\u4e0d\u78ba\u5b9a'),
+      ];
+    }
+
+    return const <_QuickReplyAction>[
+      _QuickReplyAction(
+          Icons.check_circle_outline, '\u60c5\u6cc1\u5df2\u7de9\u548c'),
+      _QuickReplyAction(
+          Icons.warning_amber_outlined, '\u60c5\u6cc1\u9084\u5728\u6301\u7e8c'),
+      _QuickReplyAction(Icons.help_outline, '\u4e0d\u78ba\u5b9a'),
+    ];
+  }
+
+  bool _hasActionableIncident(ChatResponse response) {
+    final latestUserText = _latestUserText();
+    if (_isGreetingOnly(latestUserText)) {
+      return false;
+    }
+
+    final extracted = response.extracted;
+    final category = extracted.category?.trim() ?? '';
+    if (category.isNotEmpty &&
+        category != '\u5f85\u78ba\u8a8d' &&
+        category != '\u4e00\u822c\u4e8b\u4ef6') {
+      return true;
+    }
+
+    if (response.riskLevel != 'Low' || response.riskScore >= 0.5) {
+      return true;
+    }
+
+    if (extracted.peopleInjured != null ||
+        extracted.weapon != null ||
+        extracted.dangerActive != null) {
+      return true;
+    }
+
+    final advice = extracted.dispatchAdvice?.trim() ?? '';
+    if (advice.isNotEmpty && !advice.contains('\u5f85\u78ba\u8a8d')) {
+      return true;
+    }
+
+    return _containsIncidentSignal(latestUserText);
+  }
+
+  String _latestUserText() {
+    for (final message in _history.reversed) {
+      if (message.role == 'user') {
+        return message.content.trim();
+      }
+    }
+    return '';
+  }
+
+  bool _isGreetingOnly(String text) {
+    final normalized =
+        text.toLowerCase().replaceAll(RegExp(r'[\s,，。.!！?？~～]+'), '');
+    const greetings = <String>{
+      '',
+      '你好',
+      '您好',
+      '嗨',
+      '哈囉',
+      'hello',
+      'hi',
+    };
+    return greetings.contains(normalized);
+  }
+
+  bool _containsIncidentSignal(String text) {
+    const signals = <String>[
+      '\u6025',
+      '\u6551',
+      '\u5c0f\u5b69',
+      '\u5b69\u5b50',
+      '\u5152\u7ae5',
+      '\u5b30\u5152',
+      '\u54ed',
+      '\u6c92\u53cd\u61c9',
+      '\u6c92\u6709\u53cd\u61c9',
+      '\u7121\u53cd\u61c9',
+      '\u53eb\u4e0d\u9192',
+      '\u706b',
+      '\u7159',
+      '\u5435',
+      '\u722d\u5435',
+      '\u6253',
+      '\u50b7',
+      '\u6d41\u8840',
+      '\u8eca\u798d',
+      '\u4e8b\u6545',
+      '\u53ef\u7591',
+      '\u5bb3\u6015',
+      '\u5371\u96aa',
+      '\u95d6\u5165',
+      '\u6454\u6771\u897f',
+      '\u5012\u5728',
+    ];
+    return signals.any(text.contains);
+  }
+
+  bool _containsChildConcern(String text) {
+    const childTerms = <String>[
+      '\u5c0f\u5b69',
+      '\u5b69\u5b50',
+      '\u5152\u7ae5',
+      '\u5b30\u5152',
+      '\u5bf6\u5bf6',
+    ];
+    const distressTerms = <String>[
+      '\u54ed',
+      '\u54ed\u8072',
+      '\u6c42\u6551',
+      '\u5c16\u53eb',
+      '\u54c0\u865f',
+      '\u6c92\u53cd\u61c9',
+      '\u53eb\u4e0d\u9192',
+    ];
+    return childTerms.any(text.contains) || distressTerms.any(text.contains);
+  }
+
   void _startRecordingTicker() {
     _recordingTicker?.cancel();
     _recordingTicker = Timer.periodic(const Duration(milliseconds: 250), (_) {
@@ -683,6 +1021,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _preferredLocationText(String? extractedLocation) {
+    final currentLocationText = _currentLocation?.toDisplayText();
+    if (currentLocationText != null && currentLocationText.trim().isNotEmpty) {
+      return currentLocationText;
+    }
+
     final normalized = extractedLocation?.trim() ?? '';
     const vagueLocations = <String>{
       '',
@@ -702,8 +1045,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return normalized;
     }
 
-    return _currentLocation?.toDisplayText() ??
-        '\u5c1a\u672a\u53d6\u5f97\u4f4d\u7f6e';
+    return '\u5c1a\u672a\u53d6\u5f97\u4f4d\u7f6e';
   }
 
   void _showEscalationDialog(ChatResponse response) {
@@ -845,6 +1187,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final bannerRiskScore =
         _latestResponse?.riskScore ?? _latestAudio?.riskScore;
     final voiceStatusText = _voiceStatusText();
+    final incidentStatusPills = _incidentStatusPills();
+    final quickReplyActions = _quickReplyActions();
 
     return Scaffold(
       backgroundColor: EcareApp.background,
@@ -882,56 +1226,13 @@ class _ChatScreenState extends State<ChatScreen> {
                       riskScore: bannerRiskScore,
                     ),
                   ),
-                if (_currentLocation != null)
+                if (incidentStatusPills.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.all(Radius.circular(20)),
-                          boxShadow: <BoxShadow>[
-                            BoxShadow(
-                              color: Color(0x14000000),
-                              blurRadius: 8,
-                              offset: Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            const Icon(
-                              Icons.location_on_rounded,
-                              size: 14,
-                              color: EcareApp.primary,
-                            ),
-                            const SizedBox(width: 5),
-                            ConstrainedBox(
-                              constraints:
-                                  const BoxConstraints(maxWidth: 320),
-                              child: Text(
-                                _currentLocation!.toDisplayText(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: EcareApp.muted,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                  fontFamilyFallback: <String>[
-                                    'Microsoft JhengHei',
-                                    'Microsoft YaHei',
-                                    'PingFang TC',
-                                    'Noto Sans TC',
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                    child: _IncidentSnapshotPanel(
+                      riskLevel: bannerRiskLevel ?? 'Low',
+                      statusPills: incidentStatusPills,
+                      dispatchAdvice: _latestResponse?.extracted.dispatchAdvice,
                     ),
                   ),
                 Expanded(
@@ -1026,9 +1327,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               : Text(
                                   content,
                                   style: TextStyle(
-                                    color: isUser
-                                        ? Colors.white
-                                        : EcareApp.text,
+                                    color:
+                                        isUser ? Colors.white : EcareApp.text,
                                     height: 1.55,
                                     fontSize: 15,
                                   ),
@@ -1069,15 +1369,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                   Container(
                                     width: 34,
                                     height: 34,
-                                    margin:
-                                        const EdgeInsets.only(right: 8),
+                                    margin: const EdgeInsets.only(right: 8),
                                     decoration: const BoxDecoration(
                                       color: EcareApp.primary,
                                       shape: BoxShape.circle,
                                     ),
                                     child: const Icon(
-                                      Icons.favorite_rounded,
-                                      size: 16,
+                                      Icons.support_agent_rounded,
+                                      size: 18,
                                       color: Colors.white,
                                     ),
                                   ),
@@ -1105,208 +1404,215 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
                   child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Row(
-                          children: <Widget>[
-                            SizedBox(
-                              width: 48,
-                              height: 48,
-                              child: GestureDetector(
-                                onTap: (_isSending || _isProcessingAudio) &&
-                                        !_isRecording
-                                    ? null
-                                    : _toggleRecording,
-                                onLongPressStart: (_isSending ||
-                                        _isProcessingAudio ||
-                                        _isRecording)
-                                    ? null
-                                    : (_) => _handleRecordingLongPressStart(),
-                                onLongPressMoveUpdate: _isRecording
-                                    ? _handleRecordingLongPressMove
-                                    : null,
-                                onLongPressEnd: _isRecording
-                                    ? (_) => _handleRecordingLongPressEnd()
-                                    : null,
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 180),
-                                  decoration: BoxDecoration(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (quickReplyActions.isNotEmpty &&
+                          !_isRecording &&
+                          !_isProcessingAudio) ...<Widget>[
+                        _QuickReplyBar(
+                          actions: quickReplyActions,
+                          enabled: !_isSending,
+                          onSelected: _sendQuickReply,
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      Row(
+                        children: <Widget>[
+                          SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: GestureDetector(
+                              onTap: (_isSending || _isProcessingAudio) &&
+                                      !_isRecording
+                                  ? null
+                                  : _toggleRecording,
+                              onLongPressStart: (_isSending ||
+                                      _isProcessingAudio ||
+                                      _isRecording)
+                                  ? null
+                                  : (_) => _handleRecordingLongPressStart(),
+                              onLongPressMoveUpdate: _isRecording
+                                  ? _handleRecordingLongPressMove
+                                  : null,
+                              onLongPressEnd: _isRecording
+                                  ? (_) => _handleRecordingLongPressEnd()
+                                  : null,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 180),
+                                decoration: BoxDecoration(
+                                  color: _isRecording
+                                      ? (_willCancelRecording
+                                          ? const Color(0xFF8F2E22)
+                                          : EcareApp.primary)
+                                      : Colors.white,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
                                     color: _isRecording
-                                        ? (_willCancelRecording
-                                            ? const Color(0xFF8F2E22)
-                                            : EcareApp.primary)
-                                        : Colors.white,
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(
-                                      color: _isRecording
-                                          ? Colors.transparent
-                                          : const Color(0xFFCCCCCC),
-                                    ),
-                                    boxShadow: _isRecording
-                                        ? <BoxShadow>[
-                                            BoxShadow(
-                                              color: (_willCancelRecording
-                                                      ? const Color(0xFF8F2E22)
-                                                      : EcareApp.primary)
-                                                  .withValues(alpha: 0.28),
-                                              blurRadius: 18,
-                                              offset: const Offset(0, 8),
-                                            ),
-                                          ]
-                                        : const <BoxShadow>[],
+                                        ? Colors.transparent
+                                        : const Color(0xFFCCCCCC),
                                   ),
-                                  child: Icon(
-                                    _isRecording
-                                        ? (_willCancelRecording
-                                            ? Icons.delete_outline
-                                            : Icons.mic_rounded)
-                                        : Icons.mic_none,
-                                    color: _isRecording
-                                        ? Colors.white
-                                        : EcareApp.text,
-                                    size: 22,
-                                  ),
+                                  boxShadow: _isRecording
+                                      ? <BoxShadow>[
+                                          BoxShadow(
+                                            color: (_willCancelRecording
+                                                    ? const Color(0xFF8F2E22)
+                                                    : EcareApp.primary)
+                                                .withValues(alpha: 0.28),
+                                            blurRadius: 18,
+                                            offset: const Offset(0, 8),
+                                          ),
+                                        ]
+                                      : const <BoxShadow>[],
+                                ),
+                                child: Icon(
+                                  _isRecording
+                                      ? (_willCancelRecording
+                                          ? Icons.delete_outline
+                                          : Icons.mic_rounded)
+                                      : Icons.mic_none,
+                                  color: _isRecording
+                                      ? Colors.white
+                                      : EcareApp.text,
+                                  size: 22,
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 180),
-                                child: _isRecording
-                                    ? _RecordingComposerStrip(
-                                        key:
-                                            const ValueKey<String>('recording'),
-                                        duration: _recordingDuration,
-                                        willCancel: _willCancelRecording,
-                                        dragDx: _recordingDragDx,
-                                      )
-                                    : TextField(
-                                        key: const ValueKey<String>(
-                                            'text-input'),
-                                        controller: _inputController,
-                                        enabled: !_isProcessingAudio,
-                                        minLines: 1,
-                                        maxLines: 4,
-                                        textInputAction: TextInputAction.send,
-                                        onSubmitted: (_) => _sendTextMessage(),
-                                        decoration: InputDecoration(
-                                          hintText:
-                                              '\u8f38\u5165\u4f60\u73fe\u5728\u7684\u72c0\u6cc1...',
-                                          filled: true,
-                                          fillColor: Colors.white,
-                                          contentPadding:
-                                              const EdgeInsets.symmetric(
-                                                  horizontal: 12, vertical: 10),
-                                          enabledBorder: OutlineInputBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                            borderSide: const BorderSide(
-                                                color: Color(0xFFCCCCCC)),
-                                          ),
-                                          focusedBorder: OutlineInputBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                            borderSide: const BorderSide(
-                                                color: EcareApp.primary),
-                                          ),
-                                          disabledBorder: OutlineInputBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                            borderSide: const BorderSide(
-                                                color: Color(0xFFE3D6C5)),
-                                          ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 180),
+                              child: _isRecording
+                                  ? _RecordingComposerStrip(
+                                      key: const ValueKey<String>('recording'),
+                                      duration: _recordingDuration,
+                                      willCancel: _willCancelRecording,
+                                      dragDx: _recordingDragDx,
+                                    )
+                                  : TextField(
+                                      key: const ValueKey<String>('text-input'),
+                                      controller: _inputController,
+                                      enabled: !_isProcessingAudio,
+                                      minLines: 1,
+                                      maxLines: 4,
+                                      textInputAction: TextInputAction.send,
+                                      onSubmitted: (_) => _sendTextMessage(),
+                                      decoration: InputDecoration(
+                                        hintText: _inputHintText(),
+                                        filled: true,
+                                        fillColor: Colors.white,
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 10),
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          borderSide: const BorderSide(
+                                              color: Color(0xFFCCCCCC)),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          borderSide: const BorderSide(
+                                              color: EcareApp.primary),
+                                        ),
+                                        disabledBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          borderSide: const BorderSide(
+                                              color: Color(0xFFE3D6C5)),
                                         ),
                                       ),
+                                    ),
+                            ),
+                          ),
+                          if (!_isRecording) ...<Widget>[
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              height: 44,
+                              child: FilledButton(
+                                onPressed: (_isSending || _isProcessingAudio)
+                                    ? null
+                                    : _sendTextMessage,
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: EcareApp.primary,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 10),
+                                ),
+                                child: _isSending
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : const Text('\u9001\u51fa'),
                               ),
                             ),
-                            if (!_isRecording) ...<Widget>[
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                height: 44,
-                                child: FilledButton(
-                                  onPressed: (_isSending || _isProcessingAudio)
-                                      ? null
-                                      : _sendTextMessage,
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: EcareApp.primary,
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 14, vertical: 10),
-                                  ),
-                                  child: _isSending
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2),
-                                        )
-                                      : const Text('\u9001\u51fa'),
-                                ),
+                          ] else ...<Widget>[
+                            const SizedBox(width: 8),
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
                               ),
-                            ] else ...<Widget>[
-                              const SizedBox(width: 8),
-                              AnimatedContainer(
-                                duration: const Duration(milliseconds: 180),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
+                              decoration: BoxDecoration(
+                                color: _willCancelRecording
+                                    ? const Color(0xFFFFE7E2)
+                                    : const Color(0xFFFFF3E6),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                _willCancelRecording
+                                    ? '\u653e\u958b\u53d6\u6d88'
+                                    : '\u9b06\u958b\u9001\u51fa',
+                                style: TextStyle(
                                   color: _willCancelRecording
-                                      ? const Color(0xFFFFE7E2)
-                                      : const Color(0xFFFFF3E6),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  _willCancelRecording
-                                      ? '\u653e\u958b\u53d6\u6d88'
-                                      : '\u9b06\u958b\u9001\u51fa',
-                                  style: TextStyle(
-                                    color: _willCancelRecording
-                                        ? const Color(0xFF8F2E22)
-                                        : EcareApp.text,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                                      ? const Color(0xFF8F2E22)
+                                      : EcareApp.text,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                            ],
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (voiceStatusText != null) ...<Widget>[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: <Widget>[
+                            Icon(
+                              _isRecording
+                                  ? Icons.graphic_eq_rounded
+                                  : _isProcessingAudio
+                                      ? Icons.psychology_alt_outlined
+                                      : Icons.chat_bubble_outline_rounded,
+                              size: 16,
+                              color: _voiceStatusColor(),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                voiceStatusText,
+                                style: TextStyle(
+                                  color: _voiceStatusColor(),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
-                        if (voiceStatusText != null) ...<Widget>[
-                          const SizedBox(height: 8),
-                          Row(
-                            children: <Widget>[
-                              Icon(
-                                _isRecording
-                                    ? Icons.graphic_eq_rounded
-                                    : _isProcessingAudio
-                                        ? Icons.psychology_alt_outlined
-                                        : Icons.chat_bubble_outline_rounded,
-                                size: 16,
-                                color: _voiceStatusColor(),
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  voiceStatusText,
-                                  style: TextStyle(
-                                    color: _voiceStatusColor(),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
                       ],
-                    ),
+                    ],
                   ),
+                ),
               ],
             ),
           ),
@@ -1353,6 +1659,235 @@ class _ChatTimelineItem {
       case _ChatTimelineItemType.audio:
         return audio(this.audio!, duration);
     }
+  }
+}
+
+class _IncidentStatusPill {
+  const _IncidentStatusPill({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+}
+
+class _QuickReplyAction {
+  const _QuickReplyAction(this.icon, this.text);
+
+  final IconData icon;
+  final String text;
+}
+
+class _IncidentSnapshotPanel extends StatelessWidget {
+  const _IncidentSnapshotPanel({
+    required this.riskLevel,
+    required this.statusPills,
+    this.dispatchAdvice,
+  });
+
+  final String riskLevel;
+  final List<_IncidentStatusPill> statusPills;
+  final String? dispatchAdvice;
+
+  String get _title {
+    return switch (riskLevel) {
+      'High' => '\u512a\u5148\u8655\u7406\u4e2d',
+      'Medium' => '\u6301\u7e8c\u89c0\u5bdf\u4e2d',
+      _ => '\u4e8b\u4ef6\u6458\u8981',
+    };
+  }
+
+  Color get _accentColor {
+    return switch (riskLevel) {
+      'High' => const Color(0xFF8F2E22),
+      'Medium' => const Color(0xFFC95A4A),
+      _ => EcareApp.muted,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final advice = dispatchAdvice?.trim() ?? '';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5D3B5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(Icons.checklist_rtl_rounded, color: _accentColor, size: 18),
+              const SizedBox(width: 6),
+              Text(
+                _title,
+                style: const TextStyle(
+                  color: EcareApp.text,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+              const Spacer(),
+              if (riskLevel == 'High')
+                const Icon(
+                  Icons.priority_high_rounded,
+                  color: Color(0xFF8F2E22),
+                  size: 18,
+                ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: statusPills
+                .map((item) => _IncidentStatusChip(item: item))
+                .toList(),
+          ),
+          if (advice.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 9),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: _accentColor.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _accentColor.withValues(alpha: 0.25),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Icon(
+                    Icons.directions_run_rounded,
+                    size: 14,
+                    color: _accentColor,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      advice,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _accentColor,
+                        fontSize: 12,
+                        height: 1.45,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _IncidentStatusChip extends StatelessWidget {
+  const _IncidentStatusChip({required this.item});
+
+  final _IncidentStatusPill item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7EA),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFEBDCC3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(item.icon, size: 15, color: EcareApp.primary),
+          const SizedBox(width: 5),
+          Text(
+            '${item.label}: ',
+            style: const TextStyle(
+              color: EcareApp.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 220),
+            child: Text(
+              item.value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: EcareApp.text,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickReplyBar extends StatelessWidget {
+  const _QuickReplyBar({
+    required this.actions,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final List<_QuickReplyAction> actions;
+  final bool enabled;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: actions
+              .map(
+                (action) => Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ActionChip(
+                    avatar: Icon(action.icon, size: 16),
+                    label: Text(action.text),
+                    onPressed: enabled ? () => onSelected(action.text) : null,
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: const Color(0xFFFFF7EA),
+                    disabledColor: const Color(0xFFF2E5D3),
+                    side: const BorderSide(color: Color(0xFFE5D3B5)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    labelStyle: const TextStyle(
+                      color: EcareApp.text,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
   }
 }
 

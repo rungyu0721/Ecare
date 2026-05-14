@@ -86,7 +86,7 @@ def is_brief_non_emergency_text(text: str) -> bool:
     if len(normalized) > 8:
         return False
     emergency_markers = INCIDENT_DESCRIPTION_KEYWORDS | {
-        "救命", "危險", "流血", "拿刀", "持刀", "受傷", "火災", "失火", "車禍", "昏倒", "沒呼吸",
+        "救命", "危險", "流血", "拿刀", "持刀", "受傷", "火災", "失火", "車禍", "昏倒", "暈倒", "倒地", "倒在路邊", "沒呼吸",
     }
     if has_disturbance_signal(normalized):
         return False
@@ -351,6 +351,16 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
     ref = subject_reference(ex)
 
     if ex.category == "醫療急症":
+        symptom_summary = ex.symptom_summary or ""
+        if any(token in symptom_summary for token in ["燙傷", "燒傷", "灼傷", "水泡"]):
+            return medical_follow_up_question(ex, risk_level)
+        if any(token in symptom_summary for token in ["暈倒", "昏倒"]) or ex.people_injured is True and risk_level == "High":
+            if ex.conscious is None and ex.breathing_difficulty is None:
+                return f"{ref}現在叫得醒、有反應嗎？呼吸是否正常？如果叫不醒或呼吸異常，請立刻撥打 119。"
+            if ex.conscious is None:
+                return f"{ref}現在叫得醒、有反應嗎？如果叫不醒，請立刻撥打 119。"
+            if ex.breathing_difficulty is None:
+                return f"{ref}現在呼吸是否正常？有沒有沒有呼吸、喘不過氣，或嘴唇發紫？"
         if ex.conscious is None and ex.breathing_difficulty is None:
             return f"{ref}現在意識清楚嗎？有沒有呼吸困難、喘不過氣、昏倒，或需要立刻送醫？"
         if ex.conscious is None:
@@ -443,6 +453,9 @@ def next_question_from_semantic(
 
     if semantic.intent == "情緒支持":
         return "你現在身邊有沒有可以陪你的人，或你目前是不是一個人？"
+
+    if semantic.primary_need == "開始描述狀況":
+        return default_question or "請直接告訴我現在發生什麼事，或你看到、聽到什麼狀況。"
 
     if semantic.intent == "詢問":
         return "你最想先知道哪一部分？我可以先直接回答你最急的問題。"

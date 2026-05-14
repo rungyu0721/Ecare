@@ -221,16 +221,17 @@ def warmup_llm() -> None:
     if not llm_is_ready() or not WARMUP_LLM_ON_STARTUP:
         return
 
-    prompt = """
-請只輸出一行合法 JSON，不要加其他文字：
-{"ok":true}
-"""
+    prompt = "有人受傷了，請幫我。"
     started_at = time.perf_counter()
     try:
-        response = call_llm(prompt)
-        payload = parse_llm_json_text(response.text or "")
+        response = call_llm(prompt, max_tokens=LOCAL_LLM_MAX_TOKENS)
+        text = response.text or ""
         elapsed_ms = round((time.perf_counter() - started_at) * 1000)
-        print(f"✅ LLM 預熱完成：{payload} ({elapsed_ms} ms)")
+        # 只要有回應且含 reply 欄位就算預熱成功
+        if "reply" in text:
+            print(f"✅ LLM 預熱完成（{elapsed_ms} ms）")
+        else:
+            print(f"⚠️ LLM 預熱回應異常（{elapsed_ms} ms）：{text[:100]}")
     except Exception as exc:
         elapsed_ms = round((time.perf_counter() - started_at) * 1000)
         print(f"⚠️ LLM 預熱失敗（{elapsed_ms} ms）：{exc}")

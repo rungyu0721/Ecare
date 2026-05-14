@@ -73,7 +73,17 @@ def heuristic_semantic_understanding(
     if not normalized_text:
         return SemanticUnderstanding(emotion=audio_emotion, entities=fallback_entities)
 
-    danger_keywords = ["救", "幫", "快點", "危險", "持刀", "拿刀", "流血", "火災", "失火"]
+    danger_keywords = [
+        "救", "幫", "快點", "危險",
+        "持刀", "拿刀", "有刀", "刀", "武器", "揮刀",
+        "流血", "大量流血", "受傷",
+        "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡",
+        "火災", "失火", "著火", "起火",
+        "暈倒", "昏倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊",
+        "沒反應", "沒有反應", "無反應", "叫不醒",
+        "沒呼吸", "沒有呼吸", "呼吸困難", "喘不過氣", "吸不到氣", "很喘",
+        "胸痛", "胸悶", "心臟痛", "抽搐", "半邊無力", "嘴歪", "講話不清楚", "失去意識", "意識不清",
+    ]
     emotional_support_keywords = ["好怕", "很怕", "不知道怎麼辦", "我快受不了", "我很崩潰"]
     question_keywords = ["怎麼辦", "要怎麼做", "是不是", "可不可以", "需要嗎"]
     disturbance_keywords = list(AGGRESSIVE_DISTURBANCE_KEYWORDS)
@@ -92,8 +102,15 @@ def heuristic_semantic_understanding(
         keyword in normalized_text for keyword in danger_keywords
     ):
         intent = "求救"
-        primary_need = "立即安全協助"
-        reply_strategy = "先穩定情緒，再確認安全與位置"
+        if any(keyword in normalized_text for keyword in ["暈倒", "昏倒", "暈過去", "昏過去", "倒下", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "沒有呼吸", "呼吸困難", "喘不過氣", "吸不到氣", "胸痛", "胸悶", "心臟痛", "抽搐", "半邊無力", "嘴歪", "講話不清楚", "失去意識", "意識不清", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡"]):
+            primary_need = "立即醫療確認"
+            if any(keyword in normalized_text for keyword in ["燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡"]):
+                reply_strategy = "先確認燒燙傷範圍與嚴重程度，提醒冷水沖洗與就醫條件"
+            else:
+                reply_strategy = "先確認意識與呼吸，必要時提醒撥打 119"
+        else:
+            primary_need = "立即安全協助"
+            reply_strategy = "先穩定情緒，再確認安全與位置"
     elif any(keyword in normalized_text for keyword in emotional_support_keywords):
         intent = "情緒支持"
         primary_need = "先穩定情緒"

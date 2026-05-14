@@ -5,18 +5,19 @@
 目前專案已可直接使用 `Ollama + Qwen2.5` 作為本地聊天模型，不需要再經過 LM Studio。
 
 ```powershell
-ollama pull qwen2.5:7b
-ollama create ecare:latest -f Modelfile
+ollama create ecare-v4:latest -f Modelfile.v4
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\start_backend.ps1
 ```
+
+Current app testing should use `ecare-v4:latest`. Older local models such as `ecare:latest` and `ecare-qwen2.5:latest` are kept only for comparison.
 
 如果你本機同時有 `ecare-qwen2.5:latest` 和 `ecare:latest`，請優先使用 `ecare:latest`。前者是舊的 Ollama 模型，還帶著修正前的 template。
 
 預設會使用：
 
 - `LLM_PROVIDER=ollama`
-- `LLM_MODEL=ecare:latest`
+- `LLM_MODEL=ecare-v4:latest`
 - `OLLAMA_BASE_URL=http://127.0.0.1:11434`
 
 更完整的本地模型設定請看 `LOCAL_LLM_SETUP.md`。

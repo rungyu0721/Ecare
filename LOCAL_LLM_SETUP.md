@@ -7,11 +7,10 @@ This backend now supports `LLM_PROVIDER=ollama` directly and uses Ollama's OpenA
 Use Ollama to download Qwen2.5 locally and build the E-CARE fine-tuned model:
 
 ```powershell
-ollama pull qwen2.5:7b
-ollama create ecare:latest -f Modelfile
+ollama create ecare-v4:latest -f Modelfile.v4
 ```
 
-If you still have `ecare-qwen2.5:latest` locally, prefer `ecare:latest` for app testing. The older `ecare-qwen2.5:latest` model was built before the Qwen chat-template fix.
+For current app testing, use `ecare-v4:latest`. Older models such as `ecare:latest`, `ecare-local-q4:latest`, or `ecare-qwen2.5:latest` are legacy test models.
 
 If the Ollama service is not already running on your machine, start it:
 
@@ -25,7 +24,7 @@ Use these values in PowerShell before starting the backend:
 
 ```powershell
 $env:LLM_PROVIDER="ollama"
-$env:LLM_MODEL="ecare:latest"
+$env:LLM_MODEL="ecare-v4:latest"
 $env:OLLAMA_BASE_URL="http://127.0.0.1:11434"
 ```
 
@@ -34,10 +33,10 @@ Optional values:
 ```powershell
 $env:OLLAMA_CHAT_PATH="/v1/chat/completions"
 $env:OLLAMA_API_KEY=""
-$env:OLLAMA_MAX_TOKENS="512"
-$env:COMPACT_OLLAMA_MAX_TOKENS="320"
-$env:CHAT_CONTEXT_TURNS="6"
-$env:FOLLOWUP_CONTEXT_TURNS="4"
+$env:OLLAMA_MAX_TOKENS="384"
+$env:COMPACT_OLLAMA_MAX_TOKENS="192"
+$env:CHAT_CONTEXT_TURNS="3"
+$env:FOLLOWUP_CONTEXT_TURNS="2"
 $env:ENABLE_LLM_GRAPH_PLANNER="0"
 $env:ENABLE_LLM_SEMANTIC_UNDERSTANDING="1"
 $env:WARMUP_LLM_ON_STARTUP="1"
@@ -58,7 +57,7 @@ cd D:\Ecare\Ecare
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
 $env:LLM_PROVIDER="ollama"
-$env:LLM_MODEL="ecare:latest"
+$env:LLM_MODEL="ecare-v4:latest"
 $env:OLLAMA_BASE_URL="http://127.0.0.1:11434"
 python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```

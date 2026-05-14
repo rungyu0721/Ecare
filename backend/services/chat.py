@@ -49,6 +49,7 @@ from backend.services.llm import (
     parse_llm_json_text,
 )
 from backend.services.incident_taxonomy import taxonomy_prompt_summary
+from backend.services.incident_response_guides import match_incident_response_guides
 from backend.services.postprocess import (
     adapt_opening_turn_response,
     apply_semantic_tone,
@@ -79,7 +80,11 @@ _PROMPT_SIMPLE = _load_template("chat_simple.txt")
 
 def _uses_natural_chat_model() -> bool:
     model_name = (LLM_MODEL_NAME or "").lower()
-    return model_name.startswith("ecare-local") or model_name.startswith("ecare-4080")
+    return (
+        model_name.startswith("ecare-local")
+        or model_name.startswith("ecare-4080")
+        or model_name.startswith("ecare-v4")
+    )
 
 
 def _build_natural_chat_prompt(
@@ -93,22 +98,14 @@ def _build_natural_chat_prompt(
         f"{'使用者' if message.role == 'user' else '助理'}：{message.content}"
         for message in recent
     )
-    taxonomy_text = taxonomy_prompt_summary()
     return f"""你是 E-CARE 智慧緊急事件助手。請像真人對話一樣承接上下文，使用繁體中文回覆。
 
 回覆原則：
 - 先安撫並承接使用者剛剛說的內容。
 - 不要重複問已經回答過的問題。
-- 優先提醒使用者保持安全距離、避免介入衝突，必要時撥打 119 或通知警察、站務人員。
-- 暴力或打架情境中，「有人」通常指現場其他人或對方，不是使用者本人。
-- 暴力或打架情境中，不要問「你是否有使用武器」，要問「對方/現場的人是否持有武器」。
-- 聽到隔壁小孩哀號、哭叫、求救、摔東西、疑似家暴或兒少受虐時，視為暴力事件的高風險子情境。不要問「你最擔心哪個小孩」；請先提醒使用者不要靠近門口或介入，並問聲音是否仍持續、是否聽到求救或打罵聲、是否能安全通知警察或管理員。
-- 如果使用者已經表示沒有人受傷，暴力或打架情境不要再追問呼吸、昏倒、意識或送醫；請改問衝突是否還在持續、現場是否安全、是否已通知站務人員或警方。
-- 醫療急症優先順序：先問意識是否清楚，再問呼吸是否正常，再問大量出血、胸痛、抽搐、高燒等症狀是否加重。
-- 醫療急症如果已回答意識或呼吸正常，不要重複問同一件事；若意識不清或呼吸異常，提醒立刻撥打 119，請旁人找 AED，並依 119 指示。
-- 火災優先順序：先提醒離開火場、避開濃煙、不要搭電梯；再問火勢/濃煙是否持續；再問是否有人受困、受傷或吸入濃煙。
-- 交通事故優先順序：先提醒移到安全位置、不要站在車道；再問是否有人受傷或受困；再問車輛是否阻擋車道、有漏油、冒煙或二次事故風險。
-- 回覆保持簡短清楚，通常 2 到 4 句即可。
+- 醫療急症：優先確認是否有反應、呼吸是否正常；無反應或呼吸異常時提醒立刻撥打 119。
+- 暴力/火災/交通事故：先提醒使用者保持安全距離，再問下一個最關鍵問題。
+- 回覆保持簡短清楚，通常 1 到 2 句即可。
 - 如果還需要資訊，只問下一個最重要的問題。
 
 已知事件資訊：
@@ -119,9 +116,6 @@ def _build_natural_chat_prompt(
 
 音訊或位置資訊：
 {audio_context_text}
-
-台灣事件分類參考：
-{taxonomy_text}
 
 目前對話：
 {conversation}
@@ -134,6 +128,15 @@ def _clean_natural_reply(text: str) -> str:
     cleaned = (text or "").strip()
     if not cleaned:
         return ""
+
+    if cleaned.startswith("{"):
+        try:
+            payload = json.loads(extract_json_object_text(cleaned))
+            reply = str(payload.get("reply") or "").strip()
+            next_question_text = str(payload.get("next_question") or "").strip()
+            cleaned = " ".join(part for part in [reply, next_question_text] if part)
+        except Exception:
+            pass
 
     for marker in ["</s>", "<|im_end|>", "<|endoftext|>"]:
         cleaned = cleaned.replace(marker, "")
@@ -228,7 +231,7 @@ def _has_child_protection_signal(text: str) -> bool:
     has_child = _has_any(text, ["小孩", "孩子", "兒童", "幼童", "嬰兒"])
     has_distress = _has_any(
         text,
-        ["哀號", "哭叫", "尖叫", "求救", "慘叫", "哭很大聲", "一直哭"],
+        ["哭", "哭聲", "哀號", "哭叫", "尖叫", "求救", "慘叫", "哭很大聲", "一直哭"],
     )
     has_family_violence = _has_any(
         text,
@@ -680,7 +683,7 @@ def llm_chat_with_audio(
     conversation_state = extract_conversation_state(messages)
     user_identity = build_graph_user_identity(session_id, user_context)
     client_location_text = get_client_location_text(audio_context)
-    if client_location_text and not conversation_state.location:
+    if client_location_text:
         conversation_state.location = client_location_text
         conversation_state.dispatch_advice = get_dispatch_advice(
             conversation_state.category,
@@ -741,6 +744,8 @@ def llm_chat_with_audio(
     )
     compact_chat_path = should_use_compact_chat_path(messages, pre_dialogue_state, latest_text)
     skip_graph_lookup = should_skip_graph_lookup(compact_chat_path, latest_text, conversation_state)
+    if _uses_natural_chat_model():
+        skip_graph_lookup = True
     context_turn_limit = FOLLOWUP_CONTEXT_TURNS if compact_chat_path else CHAT_CONTEXT_TURNS
     recent = messages[-context_turn_limit:]
     context = "\n".join(
@@ -773,6 +778,7 @@ def llm_chat_with_audio(
         user_graph_context = query_neo4j_user_context(user_identity)
     neo4j_hint = build_neo4j_hint(graph_plan, neo4j_info, user_graph_context)
 
+    response_guides = match_incident_response_guides(context, conversation_state)
     known_context = json.dumps(
         {
             "category": conversation_state.category,
@@ -781,6 +787,7 @@ def llm_chat_with_audio(
             "weapon": conversation_state.weapon,
             "danger_active": conversation_state.danger_active,
             "dispatch_advice": conversation_state.dispatch_advice,
+            "response_guides": response_guides,
         },
         ensure_ascii=False,
     )
@@ -815,7 +822,10 @@ def llm_chat_with_audio(
             dialogue_state_text=dialogue_state_text,
             audio_context_text=audio_context_text,
         )
-        natural_resp = call_llm(natural_prompt, max_tokens=llm_max_tokens)
+        natural_resp = call_llm(
+            natural_prompt,
+            max_tokens=min(llm_max_tokens or 192, 192),
+        )
         natural_reply = _clean_natural_reply(natural_resp.text or "")
         if natural_reply:
             natural_reply = _refine_natural_reply_for_context(
@@ -842,7 +852,12 @@ def llm_chat_with_audio(
     try:
         data = parse_llm_json_text(text)
     except RuntimeError:
-        natural_reply = _clean_natural_reply(text)
+        # If the LLM returned truncated JSON, try extracting the reply field directly.
+        reply_match = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if reply_match:
+            natural_reply = reply_match.group(1).replace('\\"', '"').replace('\\n', '\n').strip()
+        else:
+            natural_reply = _clean_natural_reply(text)
         if not natural_reply:
             raise
         natural_reply = _refine_natural_reply_for_context(
@@ -926,9 +941,18 @@ def process_chat_request(
         )
         ex.category = normalize_category_name(ex.category)
         ex = apply_turn_context(messages, ex)
-        if not ex.location and client_location_text:
-            ex.location = client_location_text
         ex = merge_extracted(conversation_state, ex)
+        if client_location_text:
+            ex.location = client_location_text
+        if not any(token in context for token in ["發燒", "高燒", "發熱", "沒有發燒"]):
+            ex.fever = None
+        if (
+            any(token in context for token in ["不知道他有沒有呼吸", "不知道有沒有呼吸", "不確定有沒有呼吸"])
+            and not any(token in context for token in ["不能呼吸", "喘不過氣", "呼吸困難"])
+            and not ("沒呼吸" in context and "有沒有呼吸" not in context)
+            and not ("沒有呼吸" in context and "有沒有呼吸" not in context)
+        ):
+            ex.breathing_difficulty = None
 
         risk_score = float(data.get("risk_score", 0.2))
         risk_score = max(0.0, min(1.0, risk_score))
@@ -985,9 +1009,9 @@ def process_chat_request(
         ex = simple_extract(context)
         ex = apply_turn_context(messages, ex)
         client_location_text = get_client_location_text(audio_context)
-        if not ex.location and client_location_text:
-            ex.location = client_location_text
         ex = merge_extracted(conversation_state, ex)
+        if client_location_text:
+            ex.location = client_location_text
         score, level = apply_structured_risk_floor(context, ex, score, level)
         ex.description = generate_incident_summary(ex, level)
 

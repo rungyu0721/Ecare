@@ -2,6 +2,7 @@
 回應後處理模組：脈絡化、消毒、語氣調整、追問優化。
 """
 
+import re
 from typing import Any, Dict, List, Optional
 
 from backend.models import ChatMessage, Extracted, SemanticUnderstanding
@@ -35,6 +36,191 @@ from backend.services.semantic import (
 )
 
 
+QUESTION_INTENT_KEYWORDS = {
+    "burn_severity": [
+        "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "面積", "焦黑", "發白",
+        "手掌", "關節", "沖洗", "範圍",
+    ],
+    "consciousness": ["意識", "清醒", "反應", "叫得醒", "叫不醒", "昏倒", "暈倒"],
+    "breathing": ["呼吸", "喘", "喘不過氣", "吸不到氣", "沒呼吸", "說完整句子"],
+    "injury": ["受傷", "傷者", "流血", "傷勢", "送醫", "救護車", "受困"],
+    "weapon": ["武器", "刀", "持刀", "棍棒", "槍"],
+    "danger_active": [
+        "危險", "還在現場", "還在持續", "持續威脅", "威脅", "對方現在",
+        "火勢", "濃煙", "車道", "求救", "打鬥", "衝突", "還在吵",
+    ],
+    "fire_active": ["火勢", "濃煙", "冒煙", "越燒越大", "起火點"],
+    "trapped": ["受困", "困在", "裡面", "出不來"],
+    "traffic_blocking": ["車道", "車流", "危險位置", "卡在", "事故車輛", "路中間", "路邊", "移到旁邊"],
+}
+
+
+def previous_question_intent(text: str, category: Optional[str] = None) -> Optional[str]:
+    normalized = (text or "").strip()
+    if not normalized:
+        return None
+
+    hits = {
+        intent
+        for intent, keywords in QUESTION_INTENT_KEYWORDS.items()
+        if any(keyword in normalized for keyword in keywords)
+    }
+    if not hits:
+        return None
+
+    category = category or ""
+    if category == "醫療急症":
+        for intent in ["burn_severity", "consciousness", "breathing", "injury"]:
+            if intent in hits:
+                return intent
+    if category == "火災":
+        for intent in ["trapped", "fire_active", "injury", "danger_active"]:
+            if intent in hits:
+                return intent
+    if category == "交通事故":
+        for intent in ["injury", "traffic_blocking", "danger_active"]:
+            if intent in hits:
+                return intent
+    if category in ["暴力事件", "可疑人士", "噪音"]:
+        for intent in ["weapon", "injury", "danger_active"]:
+            if intent in hits:
+                return intent
+
+    priority = [
+        "burn_severity", "consciousness", "breathing", "weapon", "trapped",
+        "traffic_blocking", "fire_active", "injury", "danger_active",
+    ]
+    for intent in priority:
+        if intent in hits:
+            return intent
+    return None
+
+
+def apply_short_answer_to_event_slot(
+    ex: Extracted,
+    latest_user_text: str,
+    previous_assistant_text: str,
+    risk_level: str,
+    *,
+    is_yes,
+    is_no,
+    is_unknown,
+) -> Optional[tuple]:
+    if not (is_yes(latest_user_text) or is_no(latest_user_text) or is_unknown(latest_user_text)):
+        return None
+
+    intent = previous_question_intent(previous_assistant_text, ex.category)
+    if not intent:
+        return None
+
+    from backend.services.extraction.entities import has_burn_symptom
+    answered_yes = is_yes(latest_user_text)
+    answered_unknown = is_unknown(latest_user_text)
+
+    if intent == "burn_severity" and ex.category == "醫療急症" and has_burn_symptom(ex):
+        ex.people_injured = True
+        if answered_unknown:
+            reply = (
+                "不確定也沒關係，先當作需要觀察處理。"
+                "如果安全，請先用流動清水沖洗燙傷處至少 10 分鐘，不要刺破水泡或塗抹偏方。"
+            )
+            next_q = "你能看到燙傷範圍是否變大、出現水泡，或在臉、手掌、關節附近嗎？"
+            return reply, next_q
+        if answered_yes:
+            ex.dispatch_advice = (
+                "建議處置：冷水沖洗並評估嚴重度；嚴重燒燙傷請立刻就醫或撥 119"
+            )
+            reply = (
+                "收到，這可能不是單純輕微燙傷。"
+                "請先讓傷者離開熱源，用流動清水沖洗，避免刺破水泡或撕開黏住的衣物。"
+            )
+            next_q = "燙傷範圍大約多大？是在臉、手掌、關節附近，或皮膚有焦黑、發白嗎？"
+        else:
+            ex.dispatch_advice = (
+                "建議處置：先冷水沖洗並觀察；若範圍大、起水泡或疼痛加劇再就醫/119"
+            )
+            reply = (
+                "了解，目前沒有明顯嚴重燒燙傷徵象。"
+                "請先持續用流動清水沖洗燙傷處至少 10 分鐘，保持傷處乾淨，不要塗抹偏方。"
+            )
+            next_q = "疼痛有加劇、範圍變大，或後來出現水泡嗎？"
+        return reply, next_q
+
+    if intent == "consciousness" and ex.category == "醫療急症":
+        ex.people_injured = True
+        if answered_unknown:
+            reply = "不確定意識狀況時，先把它當作可能危險來處理。"
+            next_q = "如果你能安全靠近，請看傷者胸口是否有起伏、是否能出聲回應；若沒有反應或呼吸不正常，請立刻撥 119。"
+            return reply, next_q
+        ex.conscious = answered_yes
+        if answered_yes:
+            reply = "了解，傷者目前還有反應。"
+            next_q = "呼吸是否正常？有沒有喘不過氣、嘴唇發紫，或症狀快速加重？"
+        else:
+            reply = "收到，傷者目前沒有明確反應，這需要立即處理。"
+            next_q = "請立刻撥打 119；如果你能安全靠近，請確認胸口是否有起伏或有沒有正常呼吸。"
+        return reply, next_q
+
+    if intent == "breathing" and ex.category == "醫療急症":
+        ex.people_injured = True
+        if answered_unknown:
+            reply = "不確定呼吸狀況時，請先觀察胸口是否有規律起伏。"
+            next_q = "如果看不出正常呼吸、嘴唇發紫或沒有反應，請立刻撥 119，並照 119 指示處理。"
+            return reply, next_q
+        ex.breathing_difficulty = not answered_yes
+        if answered_yes:
+            reply = "了解，目前呼吸看起來正常。"
+            next_q = "症狀有加重、胸痛、再次昏倒，或需要送醫嗎？"
+        else:
+            reply = "收到，呼吸可能不正常，這是高風險狀況。"
+            next_q = "請立刻撥打 119，並依照 119 指示確認呼吸與是否需要 AED。"
+        return reply, next_q
+
+    if intent in ["injury", "trapped"]:
+        if answered_unknown:
+            reply = "不確定也可以，先不要冒險靠近。"
+            next_q = "請從安全位置觀察，現場看起來有人倒地、受困、流血，或需要救護車嗎？"
+            return reply, next_q
+        ex.people_injured = answered_yes
+        ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+        if answered_yes:
+            reply = "收到，現場有人受傷或受困，我會以需要優先協助來整理。"
+            next_q = next_question(ex, risk_level)
+        else:
+            reply = "了解，目前沒有明確受傷或受困。"
+            next_q = next_question(ex, risk_level)
+        return reply, next_q
+
+    if intent == "weapon":
+        if answered_unknown:
+            reply = "不確定是否有武器時，先當作有風險處理，請保持距離並避免介入。"
+            next_q = next_question(ex, risk_level)
+            return reply, next_q
+        ex.weapon = answered_yes
+        ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+        if answered_yes:
+            reply = "收到，現場可能有武器，請先保持距離並確保自身安全。"
+        else:
+            reply = "了解，目前沒有提到武器。"
+        next_q = next_question(ex, risk_level)
+        return reply, next_q
+
+    if intent in ["danger_active", "fire_active", "traffic_blocking"]:
+        if answered_unknown:
+            reply = "不確定現場是否還有危險時，請先保持安全距離。"
+            next_q = "如果你能安全觀察，請回報危險是否還在持續，例如火勢、衝突、車流阻塞或有人求救。"
+            return reply, next_q
+        ex.danger_active = answered_yes
+        if answered_yes:
+            reply = "收到，危險目前還在持續，請先以自身安全為優先。"
+        else:
+            reply = "了解，目前危險看起來沒有持續擴大。"
+        next_q = next_question(ex, risk_level)
+        return reply, next_q
+
+    return None
+
+
 # ======================
 # 脈絡化回應
 # ======================
@@ -51,6 +237,10 @@ def contextualize_reply_and_question(
     previous_assistant_text = previous_assistant_text.strip()
     from backend.services.extraction import enrich_extracted_details
     ex = enrich_extracted_details(ex, latest_user_text)
+    from backend.services.extraction.entities import burn_dispatch_advice, has_burn_symptom
+    burn_advice = burn_dispatch_advice(latest_user_text, ex)
+    if burn_advice:
+        ex.dispatch_advice = burn_advice
 
     def is_yes(text: str) -> bool:
         normalized = text.replace("！", "").replace("!", "").strip().lower()
@@ -60,11 +250,27 @@ def contextualize_reply_and_question(
         normalized = text.replace("！", "").replace("!", "").strip().lower()
         return normalized in ["沒有", "沒", "不是", "不會", "不用", "沒有喔", "沒有啊", "沒有呢"]
 
+    def is_unknown(text: str) -> bool:
+        normalized = text.replace("！", "").replace("!", "").strip().lower()
+        return normalized in ["不確定", "不知道", "不清楚", "看不出來", "不太確定", "我不知道", "我不清楚"]
+
     normalized_user_location = normalize_location_candidate(latest_user_text) or latest_user_text.strip()
     answered_location = is_likely_location_response(latest_user_text)
     answered_incident_detail = is_likely_incident_detail(latest_user_text, ex)
     reply_is_generic = is_generic_intake_text(reply)
     next_question_is_generic = is_generic_intake_text(next_q)
+
+    slot_result = apply_short_answer_to_event_slot(
+        ex,
+        latest_user_text,
+        previous_assistant_text,
+        risk_level,
+        is_yes=is_yes,
+        is_no=is_no,
+        is_unknown=is_unknown,
+    )
+    if slot_result:
+        return slot_result
 
     if (
         ex.location
@@ -211,6 +417,64 @@ def looks_like_report_style_reply(text: str) -> bool:
     return marker_hits >= 2 or normalized.count(" | ") >= 2
 
 
+def _question_sentences(text: str) -> List[str]:
+    return [
+        sentence.strip()
+        for sentence in re.findall(r"[^。！？!?]+[。！？!?]?", text or "")
+        if sentence.strip().endswith(("?", "？"))
+    ]
+
+
+def _question_topics(text: str) -> set:
+    normalized = re.sub(r"[\s，,。！？!?、：:；;（）()「」『』]+", "", text or "")
+    topic_groups = {
+        "location": ["地點", "位置", "在哪", "哪裡", "地址", "路口"],
+        "injury": ["受傷", "傷者", "流血", "送醫", "救護車"],
+        "weapon": ["武器", "刀", "槍", "棍棒", "持刀"],
+        "danger": ["危險", "威脅", "攻擊", "衝突", "靠近", "追", "還在現場"],
+        "ongoing": ["持續", "還在", "仍在", "沒有停", "現在還", "平靜", "緩和", "停下"],
+        "disturbance": ["吵架", "爭吵", "吵鬧", "噪音", "大叫", "吼叫", "摔東西"],
+        "breathing": ["呼吸", "喘", "沒呼吸", "吸不到氣"],
+        "conscious": ["意識", "反應", "叫得醒", "叫不醒", "清醒"],
+        "fire": ["火", "火勢", "濃煙", "冒煙", "燃燒"],
+        "traffic": ["車禍", "車道", "車流", "撞", "事故"],
+        "detail": ["狀況", "發生什麼", "補充", "描述", "看到", "聽到"],
+    }
+    return {
+        topic
+        for topic, keywords in topic_groups.items()
+        if any(keyword in normalized for keyword in keywords)
+    }
+
+
+def _questions_are_similar(a: str, b: str) -> bool:
+    topics_a = _question_topics(a)
+    topics_b = _question_topics(b)
+    if not topics_a or not topics_b:
+        return False
+
+    overlap = topics_a & topics_b
+    if len(overlap) >= 2:
+        return True
+    if "detail" in overlap:
+        return True
+    if "disturbance" in overlap and ("ongoing" in topics_a or "ongoing" in topics_b):
+        return True
+    if "danger" in overlap and ("ongoing" in topics_a or "ongoing" in topics_b):
+        return True
+    return False
+
+
+def remove_duplicate_next_question(reply: str, next_q: str) -> str:
+    next_q = (next_q or "").strip()
+    if not next_q:
+        return ""
+    for question in _question_sentences(reply):
+        if _questions_are_similar(question, next_q):
+            return ""
+    return next_q
+
+
 # ======================
 # 消毒回應
 # ======================
@@ -270,6 +534,8 @@ def sanitize_reply_and_question(
 
         if not changed:
             break
+
+    next_q = remove_duplicate_next_question(reply, next_q)
 
     return reply, next_q
 
@@ -356,7 +622,7 @@ def adapt_opening_turn_response(
             reply = "你好，我在這裡。"
 
         if semantic.primary_need == "開始描述狀況":
-            next_q = "請直接告訴我現在發生什麼事，或你最需要我幫什麼。"
+            next_q = "請直接告訴我現在發生什麼事，或你看到、聽到什麼狀況。"
         elif not next_q:
             next_q = "你可以直接說現在發生什麼事，我會幫你整理重點。"
 

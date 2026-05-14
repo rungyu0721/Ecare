@@ -16,20 +16,62 @@ SYSTEM_PROMPT = (
     "你是 E-CARE 的緊急關懷助理，要像冷靜、可靠、有同理心的真人助理一樣回應。\n"
     "只輸出 JSON，不要加入其他文字。\n"
     "category 只能是：火災、可疑人士、噪音、醫療急症、暴力事件、交通事故、待確認\n"
-    "risk_level 只能是：Low、Medium、High"
+    "risk_level 只能是：Low、Medium、High\n"
+    "回覆要先具體承接使用者剛說的事，再給安全下一步；不可假裝已通知警方或消防。"
 )
+
+
+CHILD_TERMS = ["小孩", "孩子", "兒童", "幼童", "嬰兒", "寶寶"]
+CHILD_DISTRESS_TERMS = ["哭", "哭聲", "哭叫", "哀號", "尖叫", "求救", "慘叫", "一直哭"]
+UNRESPONSIVE_TERMS = ["沒反應", "沒有反應", "無反應", "叫不醒", "昏迷", "失去意識", "意識不清"]
+
+
+def contains_any(text: str, keywords: list[str]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def has_child_distress(text: str) -> bool:
+    return contains_any(text, CHILD_TERMS) and contains_any(text, CHILD_DISTRESS_TERMS)
+
+
+def infer_reporter_role(text: str) -> str | None:
+    self_victim_markers = [
+        "打我", "追我", "堵我", "威脅我", "闖進我", "我被打", "我被搶",
+        "我被追", "我被威脅", "我被困", "我躲", "我逃", "我出不去",
+        "在打我", "對我動手", "把我推", "我受傷", "我流血",
+    ]
+    self_medical_markers = ["我發燒", "我不舒服", "我胸痛", "我喘不過氣", "我呼吸困難", "我頭暈", "我嘔吐"]
+    witness_markers = ["我看到", "我聽到", "目擊", "隔壁", "樓上", "樓下", "鄰居", "旁邊"]
+    caregiver_markers = [
+        "我爸", "我媽", "爸爸", "媽媽", "爺爺", "奶奶", "阿公", "阿嬤",
+        "我先生", "我太太", "我老婆", "我老公", "我兒子", "我女兒",
+        "我小孩", "我的孩子", "家人",
+    ]
+    third_party_markers = ["他", "她", "對方", "有人", "朋友", "同學", "同事", "我朋友", "我同學"]
+
+    if contains_any(text, self_victim_markers):
+        return "本人受害"
+    if contains_any(text, self_medical_markers):
+        return "本人"
+    if contains_any(text, witness_markers):
+        return "旁觀者"
+    if contains_any(text, caregiver_markers):
+        return "照顧者/家屬"
+    if contains_any(text, third_party_markers):
+        return "代他人通報"
+    return None
 
 
 def infer_category(text: str) -> str:
     if any(k in text for k in ["火", "煙", "焦味", "失火", "放火", "著火", "起火", "冒煙"]):
         return "火災"
-    if any(k in text for k in ["刀", "槍", "被打", "打架", "家暴", "毆打", "攻擊", "砍", "闖入"]):
+    if has_child_distress(text) or any(k in text for k in ["刀", "槍", "被打", "打架", "家暴", "毆打", "攻擊", "砍", "闖入"]):
         return "暴力事件"
     if any(k in text for k in ["可疑", "跟蹤", "徘徊", "怪人"]):
         return "可疑人士"
     if any(k in text for k in ["車禍", "撞車", "翻車"]):
         return "交通事故"
-    if any(k in text for k in ["昏倒", "流血", "受傷", "心臟", "呼吸", "不舒服", "發燒", "抽搐"]):
+    if any(k in text for k in ["昏倒", "流血", "受傷", "心臟", "呼吸", "不舒服", "發燒", "抽搐", "沒反應", "沒有反應", "無反應", "叫不醒"]):
         return "醫療急症"
     if any(k in text for k in ["吵", "噪音", "叫", "吼", "咆哮"]):
         return "噪音"
@@ -37,10 +79,12 @@ def infer_category(text: str) -> str:
 
 
 def infer_risk(text: str, category: str):
-    high = {"刀", "槍", "流血", "昏倒", "沒呼吸", "失去意識", "放火", "闖入", "捅", "重傷"}
+    high = {"刀", "槍", "流血", "昏倒", "沒呼吸", "失去意識", "沒反應", "沒有反應", "無反應", "叫不醒", "放火", "闖入", "捅", "重傷"}
     medium = {"可疑", "跟蹤", "受傷", "呼吸困難", "救命", "威脅", "徘徊", "害怕"}
     if any(k in text for k in high) or category == "火災":
         return 0.88, "High"
+    if has_child_distress(text):
+        return 0.62, "Medium"
     if any(k in text for k in medium) or category in ["暴力事件", "可疑人士"]:
         return 0.62, "Medium"
     if category == "醫療急症":
@@ -60,12 +104,30 @@ def split_reply_and_question(output: str):
     return output.strip(), ""
 
 
+def normalize_reply_safety(reply: str) -> str:
+    replacements = [
+        ("我會迅速通知消防隊來救援", "建議你現在撥打 119，我也會協助你整理通報資訊"),
+        ("我會立刻通知警方", "建議你現在撥打 110，我也會協助你整理通報資訊"),
+        ("我會通知警方", "建議你現在撥打 110，我也會協助你整理通報資訊"),
+        ("我會通知警察", "建議你現在撥打 110，我也會協助你整理通報資訊"),
+        ("我會通知消防隊", "建議你現在撥打 119，我也會協助你整理通報資訊"),
+        ("我會派人過去", "我可以協助你整理通報資訊"),
+        ("請保持冷靜", "先慢慢來"),
+        ("保持冷靜", "先慢慢來"),
+    ]
+    text = reply
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
 def convert_item(item: dict) -> dict:
     user_input = (item.get("input") or "").strip()
     raw_output = (item.get("output") or "").strip()
     category = infer_category(user_input)
     risk_score, risk_level = infer_risk(user_input, category)
-    reply, next_question = split_reply_and_question(raw_output)
+    reply, next_question = split_reply_and_question(normalize_reply_safety(raw_output))
+    reporter_role = infer_reporter_role(user_input)
 
     dispatch_map = {
         "火災": "建議派遣：消防隊",
@@ -93,11 +155,11 @@ def convert_item(item: dict) -> dict:
         "extracted": {
             "category": category,
             "location": None,
-            "people_injured": True if any(k in user_input for k in ["流血", "受傷", "昏倒"]) else None,
+            "people_injured": True if any(k in user_input for k in ["流血", "受傷", "昏倒", "沒反應", "沒有反應", "無反應", "叫不醒"]) else None,
             "weapon": True if any(k in user_input for k in ["刀", "槍"]) else None,
             "danger_active": True if any(k in user_input for k in ["一直", "還在", "持續"]) else None,
-            "reporter_role": None,
-            "conscious": None,
+            "reporter_role": reporter_role,
+            "conscious": False if contains_any(user_input, UNRESPONSIVE_TERMS) else None,
             "breathing_difficulty": True if "呼吸" in user_input else None,
             "fever": None,
             "symptom_summary": None,

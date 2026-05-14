@@ -1,4 +1,4 @@
-FROM D:\Ecare\Ecare\scripts\output\ecare-qwen2.5-7b-q4km.gguf
+FROM ./scripts/output/ecare-v4-q4km.gguf
 
 # Keep the imported GGUF on Qwen's expected chat template.
 TEMPLATE """{{- if .Messages }}

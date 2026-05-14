@@ -85,7 +85,9 @@ def get_dispatch_advice(
     if category == "可疑人士":
         return "建議派遣：警察"
     if category == "噪音":
-        return "建議派遣：警察或相關單位查看"
+        if weapon or people_injured:
+            return "建議派遣：警察，必要時通知救護車待命"
+        return "建議處置：先確認是否有求救、受傷或威脅；必要時通知管理員或警察"
     return "建議派遣：待確認"
 
 
