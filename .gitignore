@@ -1,28 +1,57 @@
-datasets/
-*.wav
+# Python environments and caches
 .venv/
-node_modules/
-www/
 __pycache__/
 *.pyc
 *.pyc.*
-backend/__pycache__/
-android/.gradle/
-android/app/build/
-local.properties
-.idea/
-.vscode/
+.pytest_cache/
+.cache/
+
+# Local secrets and editor files
 .env
 .env.*
 start_backend.ps1
+.idea/
+.vscode/
 .claude/
-*.pkl
+local.properties
+
+# Runtime and generated data
+datasets/
+*.wav
+training.log
+nohup.out
+
+# Model artifacts and conversion outputs
 *.gguf
 scripts/output/
+convert_hf_to_gguf.py
+
+# Large training datasets and generated candidate files.
+# Keep curated regression data tracked:
+# - scripts/data/v4_context_cases.jsonl
+# - scripts/data/v4_semantic_cases.jsonl
+scripts/data/ecare_train_*.jsonl
+scripts/data/v4_standard.jsonl
+scripts/data/v4_multiturn.jsonl
+scripts/data/v4_semantic_candidates*.jsonl
+
+# Local training / audit helper scripts
+scripts/audit_training_data.py
+scripts/clean_training_data.py
+scripts/merge_lora.py
+scripts/test_lora_inference.py
+
+# Downloaded wheels
+*.whl
 torch_wheels/
 torch_wheels_linux/
 wheels_linux/
-convert_hf_to_gguf.py
+
+# Node / web output
+node_modules/
+www/
+
+# Flutter generated files
 flutter_app/.dart_tool/
 flutter_app/.packages
 flutter_app/build/
@@ -31,25 +60,11 @@ flutter_app/.flutter-plugins-dependencies
 flutter_app/.metadata
 flutter_app/.idea/
 
-# 訓練相關腳本（開發中，暫不追蹤）
-scripts/audit_training_data.py
-scripts/clean_training_data.py
-scripts/merge_lora.py
-scripts/test_lora_inference.py
+# Android build output
+android/.gradle/
+android/app/build/
+flutter_app/android/.gradle/
+flutter_app/android/app/build/
 
-# 大型訓練資料集（不進 git，體積過大）
-scripts/data/ecare_train_*.jsonl
-scripts/data/v4_standard.jsonl
-scripts/data/v4_multiturn.jsonl
-scripts/data/v4_semantic_candidates*.jsonl
-# 小型測試/語意案例（v4_context_cases.jsonl, v4_semantic_cases.jsonl 應追蹤）
-
-# 下載的 wheel 檔
-*.whl
-
-# 訓練 log
-training.log
-nohup.out
-
-# HuggingFace 快取
-.cache/
+# Serialized local models
+*.pkl

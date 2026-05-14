@@ -1,0 +1,25 @@
+# Optional dependencies for LoRA fine-tuning, dataset generation, and model export.
+# Install the runtime dependencies first:
+#   pip install -r requirements.txt
+#
+# PyTorch is intentionally not pinned here because CUDA/Windows/Linux builds differ.
+# Install the correct torch/torchvision/torchaudio wheels from the official PyTorch
+# selector for your GPU and CUDA version before installing this file.
+
+-r requirements.txt
+
+accelerate>=1.0,<2.0
+bitsandbytes>=0.42
+datasets>=2.20,<5.0
+peft>=0.13,<1.0
+safetensors>=0.4,<1.0
+sentencepiece>=0.2,<1.0
+tokenizers>=0.20,<1.0
+transformers>=4.45,<6.0
+trl>=0.12,<1.0
+tqdm>=4.66,<5.0
+
+# Optional optimization packages. Install only when the platform supports them.
+# xformers
+# unsloth
+# unsloth_zoo
