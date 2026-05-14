@@ -1,0 +1,37 @@
+$ErrorActionPreference = "Stop"
+
+# Copy this file to start_backend.ps1 for local development:
+#   Copy-Item start_backend.ps1.example start_backend.ps1
+#
+# Keep the copied start_backend.ps1 out of git if it contains local secrets.
+
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $Root
+
+if (Test-Path ".env") {
+    Get-Content ".env" | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith("#")) {
+            return
+        }
+
+        $parts = $line.Split("=", 2)
+        if ($parts.Count -eq 2) {
+            [Environment]::SetEnvironmentVariable($parts[0].Trim(), $parts[1].Trim(), "Process")
+        }
+    }
+}
+
+if (-not $env:LLM_PROVIDER) {
+    $env:LLM_PROVIDER = "ollama"
+}
+
+if (-not $env:LLM_MODEL) {
+    $env:LLM_MODEL = "ecare-v4:latest"
+}
+
+if (-not $env:OLLAMA_BASE_URL) {
+    $env:OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+}
+
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload

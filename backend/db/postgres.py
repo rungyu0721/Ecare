@@ -2,8 +2,8 @@
 PostgreSQL 資料庫操作：連線、初始化、CRUD。
 """
 
-import random
 import time
+import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -135,7 +135,7 @@ def now_str():
 
 
 def make_id(prefix="A"):
-    return f"{prefix}{random.randint(100, 999)}"
+    return f"{prefix}{uuid.uuid4().hex[:12].upper()}"
 
 
 def build_user_item(row: Dict[str, Any]) -> UserItem:
