@@ -3,7 +3,7 @@
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import ENABLE_LLM_SEMANTIC_UNDERSTANDING
 from backend.models import (
@@ -220,8 +220,17 @@ def semantic_understanding_from_text(
     }
     safe_extracted = extracted.model_dump() if extracted else {}
 
+    # Build recent conversation context (last 2 turns = up to 4 messages)
+    context_lines = []
+    if messages:
+        recent_msgs = [m for m in messages if m.content.strip()][-4:]
+        for msg in recent_msgs:
+            role_name = "使用者" if msg.role == "user" else "助理"
+            context_lines.append(f"{role_name}：{msg.content[:120]}")
+    context_text = "\n".join(context_lines) if context_lines else "（首次開口）"
+
     prompt = f"""
-你是語意理解模組。請根據使用者文字、語音情緒與事件抽取結果，輸出語意理解 JSON。
+你是語意理解模組。請根據使用者文字、語音情緒、近期對話與事件抽取結果，輸出語意理解 JSON。
 
 規則：
 - 只能輸出 JSON
@@ -232,6 +241,7 @@ def semantic_understanding_from_text(
 - 如果語音情緒是 panic / fearful 且分數高，優先判斷是否需要立即安全協助
 - 如果文字是在描述他人出事，primary_need 與 reply_strategy 也要反映「協助通報/確認現場」而不是只安撫本人
 - 不要把「我旁邊、這裡、附近、現場」當成明確位置
+- 如果最新一句是「有」「沒有」「是」「對」等短回覆，請結合近期對話判斷它在回答什麼、意思是什麼
 
 輸出格式：
 {{
@@ -247,7 +257,10 @@ def semantic_understanding_from_text(
   }}
 }}
 
-文字：
+近期對話（用來解讀短回覆）：
+{context_text}
+
+最新文字：
 {text}
 
 語音脈絡：
@@ -278,3 +291,115 @@ def semantic_understanding_from_text(
         )
     except Exception:
         return fallback_semantic
+
+
+# ======================
+# LLM slot 填值（Plan B）
+# 在規則系統之後，填補仍為 None 的 slot
+# ======================
+
+_SLOT_RELEVANT_BY_CATEGORY: Dict[str, List[str]] = {
+    "暴力事件": ["weapon", "people_injured", "danger_active"],
+    "醫療急症": ["conscious", "breathing_difficulty", "people_injured"],
+    "火災":     ["danger_active", "people_injured"],
+    "交通事故": ["people_injured", "danger_active"],
+    "可疑人士": ["danger_active"],
+    "噪音":     ["danger_active", "people_injured"],
+}
+
+
+def _pending_slots(extracted: Extracted) -> List[str]:
+    category = (extracted.category or "").strip()
+    relevant = _SLOT_RELEVANT_BY_CATEGORY.get(category, [])
+    slot_values: Dict[str, Optional[bool]] = {
+        "weapon": extracted.weapon,
+        "people_injured": extracted.people_injured,
+        "danger_active": extracted.danger_active,
+        "conscious": extracted.conscious,
+        "breathing_difficulty": extracted.breathing_difficulty,
+    }
+    return [s for s in relevant if slot_values.get(s) is None]
+
+
+def llm_extract_slots(
+    user_text: str,
+    last_question: str,
+    extracted: Extracted,
+) -> Extracted:
+    """
+    Focused LLM call to fill remaining None slots.
+    Only invoked when rule-based pipeline left slots unfilled and user text
+    is long enough that vocabulary matching likely missed nuanced phrasing.
+    """
+    if not llm_is_ready():
+        return extracted
+
+    text = user_text.strip()
+    # Very short replies (≤4 chars) are already handled by slot_resolver
+    if len(text) <= 4:
+        return extracted
+
+    pending = _pending_slots(extracted)
+    if not pending:
+        return extracted
+
+    category = extracted.category or "未知"
+    q_text = (last_question or "（無）")[:100]
+    pending_json = json.dumps({s: None for s in pending}, ensure_ascii=False)
+
+    prompt = (
+        f"緊急事件 slot 填值。只輸出 JSON，不要解釋。\n"
+        f"事件類別：{category}\n"
+        f"助理問：{q_text}\n"
+        f"使用者說：{text[:150]}\n\n"
+        f"根據使用者的話判斷以下 slot（true/false/null，null=無法判斷）：\n"
+        f"{pending_json}\n"
+        f"輸出 JSON："
+    )
+
+    try:
+        resp = call_llm(prompt, max_tokens=80)
+        result_text = (resp.text or "").strip()
+        if result_text.startswith("```"):
+            result_text = result_text.replace("```json", "").replace("```", "").strip()
+
+        data = parse_llm_json_text(result_text)
+        if not isinstance(data, dict):
+            return extracted
+
+        def _safe_bool(val) -> Optional[bool]:
+            if val is None:
+                return None
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, str):
+                low = val.lower()
+                if low in ("true", "yes", "是", "有"):
+                    return True
+                if low in ("false", "no", "否", "沒有", "沒"):
+                    return False
+            return None
+
+        for slot in pending:
+            raw = data.get(slot)
+            value = _safe_bool(raw)
+            if value is None:
+                continue
+            if slot == "people_injured" and extracted.people_injured is None:
+                extracted.people_injured = value
+            elif slot == "weapon" and extracted.weapon is None:
+                extracted.weapon = value
+            elif slot == "danger_active" and extracted.danger_active is None:
+                extracted.danger_active = value
+            elif slot == "conscious" and extracted.conscious is None:
+                extracted.conscious = value
+                if value is False:
+                    extracted.people_injured = True
+            elif slot == "breathing_difficulty" and extracted.breathing_difficulty is None:
+                extracted.breathing_difficulty = value
+                if value is True:
+                    extracted.people_injured = True
+    except Exception:
+        pass
+
+    return extracted

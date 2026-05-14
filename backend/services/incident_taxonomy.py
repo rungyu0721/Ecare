@@ -14,6 +14,29 @@ def load_incident_taxonomy() -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _is_negated_keyword(text: str, keyword: str) -> bool:
+    if keyword not in {"受傷", "傷害", "流血", "武器", "刀", "槍", "持刀", "持槍"}:
+        return False
+
+    negations = ["沒有", "沒", "無", "未發現", "沒看到", "沒有看到"]
+    for index in _keyword_indexes(text, keyword):
+        prefix = text[max(0, index - 6):index]
+        if any(neg in prefix for neg in negations):
+            return True
+    return False
+
+
+def _keyword_indexes(text: str, keyword: str) -> list[int]:
+    indexes: list[int] = []
+    start = 0
+    while True:
+        index = text.find(keyword, start)
+        if index == -1:
+            return indexes
+        indexes.append(index)
+        start = index + len(keyword)
+
+
 def match_incident_taxonomy(text: str) -> Optional[dict[str, Any]]:
     normalized = text or ""
     if not normalized.strip():
@@ -26,7 +49,7 @@ def match_incident_taxonomy(text: str) -> Optional[dict[str, Any]]:
             matched_keywords = [
                 keyword
                 for keyword in subtype.get("keywords", [])
-                if keyword and keyword in normalized
+                if keyword and keyword in normalized and not _is_negated_keyword(normalized, keyword)
             ]
             if not matched_keywords:
                 continue

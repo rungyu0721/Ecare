@@ -785,9 +785,26 @@ class _ChatScreenState extends State<ChatScreen> {
     final isViolenceOrNoise =
         category.contains('\u66b4\u529b') || category.contains('\u566a\u97f3');
     final isFire = category.contains('\u706b\u707d');
+    final isTraffic = category.contains('\u4ea4\u901a') ||
+        category.contains('\u8eca\u798d') ||
+        category.contains('\u4e8b\u6545');
     final isChildConcern = _containsChildConcern(_latestUserText());
 
-    if (isHighRisk) {
+    if (isTraffic) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(
+            Icons.medical_services_outlined, '\u6709\u4eba\u53d7\u50b7'),
+        _QuickReplyAction(
+            Icons.traffic_outlined, '\u8eca\u9084\u5728\u8eca\u9053'),
+        _QuickReplyAction(
+            Icons.directions_walk_outlined, '\u5df2\u79fb\u5230\u8def\u908a'),
+        _QuickReplyAction(
+            Icons.phone_in_talk_outlined, '\u5df2\u64a5\u6253 110/119'),
+        _QuickReplyAction(Icons.help_outline, '\u4e0d\u78ba\u5b9a'),
+      ];
+    }
+
+    if (isHighRisk && (isViolenceOrNoise || isChildConcern)) {
       return const <_QuickReplyAction>[
         _QuickReplyAction(Icons.shield_outlined, '\u6211\u5df2\u9060\u96e2'),
         _QuickReplyAction(
@@ -796,6 +813,17 @@ class _ChatScreenState extends State<ChatScreen> {
             Icons.report_problem_outlined, '\u770b\u5230\u6b66\u5668'),
         _QuickReplyAction(
             Icons.phone_in_talk_outlined, '\u5df2\u64a5\u6253 110'),
+      ];
+    }
+
+    if (isHighRisk) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.shield_outlined, '\u6211\u5df2\u9060\u96e2'),
+        _QuickReplyAction(
+            Icons.medical_services_outlined, '\u6709\u4eba\u53d7\u50b7'),
+        _QuickReplyAction(
+            Icons.phone_in_talk_outlined, '\u5df2\u64a5\u6253 119'),
+        _QuickReplyAction(Icons.help_outline, '\u4e0d\u78ba\u5b9a'),
       ];
     }
 

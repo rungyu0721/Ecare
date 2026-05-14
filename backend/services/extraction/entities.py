@@ -37,6 +37,7 @@ from backend.services.v4_event_semantics import (
     apply_v4_slot_hints,
     best_category_from_text,
     contains_negated,
+    contains_uncertain,
 )
 
 
@@ -109,6 +110,8 @@ def collect_symptoms(text: str) -> List[str]:
         ("頭暈", "頭暈"), ("嘔吐", "嘔吐"), ("流血", "流血"), ("受傷", "受傷"),
         ("燙傷", "燙傷"), ("燒傷", "燒傷"), ("灼傷", "灼傷"), ("燙到", "燙傷"),
         ("燒到", "燒傷"), ("水泡", "水泡"),
+        ("噎到", "異物哽塞"), ("哽塞", "異物哽塞"), ("噎住", "異物哽塞"),
+        ("中暑", "中暑"), ("熱衰竭", "熱衰竭"), ("癲癇", "癲癇"),
         ("小擦傷", "擦傷"), ("擦傷", "擦傷"), ("小傷口", "小傷口"),
         ("輕傷", "輕傷"), ("咳", "咳嗽"),
     ]
@@ -184,11 +187,13 @@ def medical_follow_up_question(ex: Extracted, risk_level: str) -> str:
     if ex.conscious is True and any(token in symptom_summary for token in ["擦傷", "小傷口", "輕傷"]):
         return f"{ref}傷口現在有持續流血、需要止血包紮，或還有頭暈、想吐、明顯疼痛加重嗎？"
     if ex.conscious is False:
-        return f"{ref}目前沒有反應，請立刻撥打 119；如果你能安全靠近，請確認胸口是否有起伏或有沒有正常呼吸。"
+        if ex.reporter_role == "照顧者/家屬":
+            return "你的家人目前沒有反應，系統已列為高風險通報。請保持手機可接通，現在確認胸口是否有起伏、是否有正常呼吸；如果沒有正常呼吸，請開擴音聽救援指示，並請旁邊的人找 AED。"
+        return f"{ref}目前沒有反應，系統已列為高風險通報。請先確認你自己安全；如果你就在傷者旁邊，請確認胸口是否有起伏或有沒有正常呼吸。周圍有車流、火煙、暴力或其他明顯危險時，不要靠近。"
     if ex.breathing_difficulty is True:
-        return f"{ref}現在能正常說完整句子嗎？症狀有在加重，或需要立刻送醫嗎？如果越來越喘，請立刻撥 119。"
+        return f"{ref}現在能正常說完整句子嗎？症狀有在加重嗎？如果越來越喘，系統會列為高風險通報，請保持手機可接通。"
     if risk_level == "High":
-        return f"{ref}現在最危急的症狀是什麼？如果有胸痛、喘不過氣、昏倒或意識不清，請立刻撥 119。"
+        return f"{ref}現在最危急的症狀是什麼？如果有胸痛、喘不過氣、昏倒或意識不清，系統會優先整理成高風險通報。"
     return f"除了目前提到的症狀外，{ref}還有發燒、胸痛、嘔吐，或其他不舒服正在加重嗎？"
 
 
@@ -243,14 +248,17 @@ def simple_extract(text: str) -> Extracted:
     has_disturbance = has_disturbance_signal(text)
     has_aggressive_disturbance = has_aggressive_disturbance_signal(text)
     has_suspicious_activity = any(keyword in text for keyword in SUSPICIOUS_ACTIVITY_KEYWORDS)
-    has_violence_signal = any(keyword in text for keyword in VIOLENCE_SIGNAL_KEYWORDS)
+    has_violence_signal = any(
+        keyword in text and not contains_negated(text, [keyword]) and not contains_uncertain(text, [keyword])
+        for keyword in VIOLENCE_SIGNAL_KEYWORDS
+    )
     has_child_protection_signal = (
         any(k in text for k in ["家暴", "虐待", "受虐", "打小孩", "打罵", "摔東西", "砸東西"])
         or has_child_distress_signal(text)
     )
 
     v4_category = best_category_from_text(text)
-    if v4_category in ["交通事故", "可疑人士"]:
+    if v4_category in ["交通事故", "可疑人士", "火災", "暴力事件"]:
         ex.category = v4_category
     elif taxonomy_match and taxonomy_match.get("app_category"):
         ex.category = taxonomy_match["app_category"]
@@ -272,23 +280,36 @@ def simple_extract(text: str) -> Extracted:
         ex.category = "噪音"
     elif any(k in text for k in ["車禍", "撞車", "翻車", "追撞", "被車撞", "撞到人", "機車倒", "汽車撞"]):
         ex.category = "交通事故"
-    elif any(k in text for k in ["昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "心臟痛", "胸悶", "半邊無力", "嘴歪", "講話不清楚", "頭暈", "胸痛", "呼吸困難", "喘不過氣", "吸不到氣", "不舒服", "發燒", "嘔吐"]):
+    elif any(
+        k in text and not contains_negated(text, [k])
+        for k in [
+            "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上",
+            "倒在路邊", "流血", "大量流血", "血流不停", "受傷", "燙傷",
+            "燒傷", "灼傷", "燙到", "燒到", "水泡", "沒反應", "沒有反應",
+            "無反應", "叫不醒", "沒呼吸", "抽搐", "心臟痛", "胸悶",
+            "半邊無力", "嘴歪", "講話不清楚", "頭暈", "胸痛", "呼吸困難",
+            "喘不過氣", "吸不到氣", "不舒服", "發燒", "嘔吐",
+        ]
+    ):
         ex.category = "醫療急症"
     else:
         ex.category = "待確認"
 
-    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐"]
-    if contains_negated(text, ["受傷", "流血", "水泡", "昏倒", "呼吸困難", "嘔吐"]):
+    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐", "噎到", "哽塞", "噎住", "臉發紫", "中暑", "熱衰竭", "癲癇"]
+    if contains_negated(text, ["受傷", "流血", "昏倒", "呼吸困難", "嘔吐"]):
         ex.people_injured = False
     elif any(k in text for k in injury_terms):
         ex.people_injured = True
     else:
         ex.people_injured = None
 
-    if contains_negated(text, ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]):
+    weapon_terms = ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]
+    if contains_negated(text, weapon_terms):
         ex.weapon = False
+    elif contains_uncertain(text, weapon_terms):
+        ex.weapon = None
     else:
-        ex.weapon = True if any(k in text for k in ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]) else None
+        ex.weapon = True if any(k in text for k in weapon_terms) else None
     ex.danger_active = True if has_child_protection_signal or any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場", "追人", "追我", "揮刀", "攻擊中"]) else None
     if has_child_unresponsive_signal(text):
         ex.conscious = False
@@ -312,7 +333,11 @@ def merge_extracted(base: Extracted, incoming: Extracted) -> Extracted:
     incoming.category = normalize_category_name(incoming.category)
 
     if incoming.category and incoming.category != "待確認":
-        base.category = incoming.category
+        if not base.category or base.category == "待確認":
+            base.category = incoming.category
+        # Don't overwrite an established category with a different one:
+        # e.g., "救命" in a fire context should not flip 火災 → 暴力事件.
+        # Same-category reinforcement is still fine.
     elif not base.category:
         base.category = incoming.category
 

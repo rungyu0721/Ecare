@@ -6,12 +6,14 @@ risk scoring, and follow-up context can evolve together.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Dict, Iterable, Optional, Set, Tuple
 
 from backend.models import Extracted
 
 
-V4_EVENT_RULES: Dict[str, Dict[str, object]] = {
+_FALLBACK_EVENT_RULES: Dict[str, Dict[str, object]] = {
     "暴力事件": {
         "category_terms": [
             "打架", "互毆", "被打", "毆打", "家暴", "打小孩", "虐待", "闖入",
@@ -70,7 +72,7 @@ V4_EVENT_RULES: Dict[str, Dict[str, object]] = {
         "medium_terms": ["焦味", "冒煙", "電線冒煙", "燒焦味", "煙味"],
         "lower_terms": ["火滅了", "火已經滅", "沒有煙", "人都出來", "大家都出來", "已經離開", "消防到了"],
         "slot_terms": {
-            "people_injured": ["受困", "受傷", "嗆傷", "吸入濃煙", "困在裡面"],
+            "people_injured": ["受困", "受傷", "嗆傷", "吸入濃煙", "困在裡面", "救命", "喊救命", "叫救命", "有人被困", "有人出不來"],
             "danger_active": ["火勢", "濃煙", "冒煙", "還在燒", "越燒越大", "瓦斯味"],
         },
     },
@@ -93,7 +95,7 @@ V4_EVENT_RULES: Dict[str, Dict[str, object]] = {
     "可疑人士": {
         "category_terms": [
             "可疑", "怪人", "陌生人", "跟蹤", "尾隨", "徘徊", "鬼鬼祟祟",
-            "在門口", "不走", "看我家", "試門把", "跟著我", "越走越近",
+            "在門口", "不走", "看我家", "看著我家", "試門把", "跟著我", "越走越近",
         ],
         "high_terms": [
             "跟著我", "尾隨我", "靠近我", "堵我", "在我家門口", "試門把",
@@ -123,16 +125,69 @@ V4_EVENT_RULES: Dict[str, Dict[str, object]] = {
 }
 
 
+def _load_v4_lexicon() -> Dict[str, object]:
+    path = Path(__file__).resolve().parents[1] / "data" / "v4_semantic_lexicon.json"
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            lexicon = json.load(fh)
+        events = lexicon.get("events")
+        if not isinstance(events, dict) or not events:
+            raise ValueError(f"invalid v4 semantic lexicon: {path}")
+        return lexicon
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {
+            "version": "fallback",
+            "category_priority": ["交通事故", "火災", "暴力事件", "可疑人士", "醫療急症", "噪音"],
+            "events": _FALLBACK_EVENT_RULES,
+        }
+
+
+V4_LEXICON = _load_v4_lexicon()
+V4_EVENT_RULES = V4_LEXICON["events"]
+V4_CATEGORY_PRIORITY = V4_LEXICON.get(
+    "category_priority",
+    ["交通事故", "火災", "暴力事件", "可疑人士", "醫療急症", "噪音"],
+)
+
+
 def contains_any(text: str, terms: Iterable[str]) -> bool:
     return any(term in text for term in terms)
 
 
 def contains_negated(text: str, terms: Iterable[str]) -> bool:
     negations = ["沒有", "沒", "無", "未發現", "沒看到", "沒有看到"]
-    person_negations = ["沒有人", "沒其他人", "沒有其他人", "無人", "未發現有人"]
-    return any(f"{neg}{term}" in text for neg in negations for term in terms) or any(
-        f"{neg}{term}" in text for neg in person_negations for term in terms
-    )
+    person_negations = ["沒人", "沒有人", "沒其他人", "沒有其他人", "無人", "未發現有人"]
+    all_negations = negations + person_negations
+    for term in terms:
+        if not term:
+            continue
+        start = 0
+        while True:
+            index = text.find(term, start)
+            if index == -1:
+                break
+            prefix = text[max(0, index - 8):index]
+            if any(neg in prefix for neg in all_negations):
+                return True
+            start = index + len(term)
+    return False
+
+
+def contains_uncertain(text: str, terms: Iterable[str]) -> bool:
+    uncertainty_terms = ["不確定", "不知道", "不清楚", "沒看清楚", "沒有看清楚"]
+    for term in terms:
+        if not term:
+            continue
+        start = 0
+        while True:
+            index = text.find(term, start)
+            if index == -1:
+                break
+            prefix = text[max(0, index - 10):index]
+            if any(uncertain in prefix for uncertain in uncertainty_terms):
+                return True
+            start = index + len(term)
+    return False
 
 
 def matching_categories(text: str) -> Set[str]:
@@ -143,9 +198,26 @@ def matching_categories(text: str) -> Set[str]:
     }
 
 
+def _has_contextual_violence(text: str) -> bool:
+    conflict_terms = ["吵架", "爭吵", "口角", "衝突", "打人", "打我", "打他", "打她", "打我朋友"]
+    escalation_terms = ["失控", "威脅", "恐嚇", "打起來", "打鬥", "摔東西", "砸東西", "追", "推人", "受傷"]
+    return contains_any(text, conflict_terms) and contains_any(text, escalation_terms)
+
+
+def _has_contextual_traffic(text: str) -> bool:
+    vehicle_terms = ["車", "機車", "汽車", "騎士", "行人"]
+    incident_terms = ["撞", "摔", "倒", "翻", "路中", "路中間", "車道", "阻塞", "漏油", "冒煙", "起火"]
+    return contains_any(text, vehicle_terms) and contains_any(text, incident_terms)
+
+
 def best_category_from_text(text: str) -> Optional[str]:
+    if _has_contextual_traffic(text):
+        return "交通事故"
+    if _has_contextual_violence(text):
+        return "暴力事件"
+
     matches = matching_categories(text)
-    for category in ["交通事故", "火災", "暴力事件", "可疑人士", "醫療急症", "噪音"]:
+    for category in V4_CATEGORY_PRIORITY:
         if category in matches:
             return category
     return None
@@ -199,7 +271,10 @@ def apply_v4_slot_hints(text: str, ex: Extracted) -> Extracted:
             ex.people_injured = False
         elif ex.people_injured is None and contains_any(text, injury_terms):
             ex.people_injured = True
-        if ex.weapon is None and contains_any(text, slot_terms.get("weapon", [])):
+        weapon_terms = slot_terms.get("weapon", [])
+        if contains_negated(text, weapon_terms):
+            ex.weapon = False
+        elif ex.weapon is None and not contains_uncertain(text, weapon_terms) and contains_any(text, weapon_terms):
             ex.weapon = True
         if ex.danger_active is None and contains_any(text, slot_terms.get("danger_active", [])):
             ex.danger_active = True

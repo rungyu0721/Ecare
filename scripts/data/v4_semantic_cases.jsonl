@@ -27,3 +27,10 @@
 {"id":"noise_construction_handled","text":"只是施工噪音，管理員處理了","expected":{"category":"噪音","risk_level":"Low","danger_active":false}}
 {"id":"unclear_big_sound","text":"外面突然一聲很大的聲音，我不知道發生什麼事","expected":{"risk_level":"Low"}}
 {"id":"unclear_help","text":"有人喊救命","expected":{"category":"暴力事件","risk_level":"High"}}
+{"id":"negated_injury_weapon","text":"我沒有受傷，也沒有看到他有武器","expected":{"people_injured":false,"weapon":false}}
+{"id":"uncertain_weapon","text":"我看到有人打人，但不確定是不是用武器","expected":{"category":"暴力事件","weapon":null}}
+{"id":"medical_choking","text":"有人噎到，臉發紫，說不出話。","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}
+{"id":"medical_severe_bleeding","text":"他刀割傷，大量流血，血流不止。","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}
+{"id":"medical_seizure","text":"有人抽搐，眼睛往上翻，嘴角有泡沫。","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}
+{"id":"medical_stroke_fast","text":"我媽突然嘴歪，半邊無力，說話不清楚。","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}
+{"id":"medical_heat_illness","text":"有人中暑昏倒，皮膚很燙，沒有流汗。","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}

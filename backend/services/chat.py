@@ -322,6 +322,11 @@ def _apply_natural_turn_context(state: Extracted, messages: List[ChatMessage]) -
     elif _is_medical_context(state, messages):
         state = _apply_medical_turn_context(state, latest_text, previous_assistant)
 
+    # Final pass: fill any remaining None slots from short affirmation/negation replies
+    if previous_assistant:
+        from backend.services.slot_resolver import apply_slot_resolver
+        state = apply_slot_resolver(latest_text, previous_assistant, state)
+
     state.dispatch_advice = get_dispatch_advice(
         state.category,
         state.weapon,
@@ -347,17 +352,25 @@ def _apply_violence_turn_context(
             state.weapon = False
         elif _has_any(latest_text, ["持刀", "拿刀", "刀", "棍棒", "槍", "武器"]):
             state.weapon = True
+        elif asked_weapon and _is_positive_turn(latest_text):
+            state.weapon = True
 
     if asked_injury or _has_any(latest_text, ["受傷", "流血", "傷者"]):
         if _is_negative_turn(latest_text):
             state.people_injured = False
         elif _has_any(latest_text, ["受傷", "流血", "倒地", "昏倒", "傷者"]):
             state.people_injured = True
+        elif asked_injury and _is_positive_turn(latest_text):
+            state.people_injured = True
 
     if asked_danger or _has_any(latest_text, ["還在", "持續", "正在", "停了", "散了", "結束"]):
         if _has_any(latest_text, ["停了", "散了", "結束", "沒有繼續", "沒在打"]):
             state.danger_active = False
         elif _has_any(latest_text, ["還在", "持續", "正在", "繼續", "還沒停"]):
+            state.danger_active = True
+        elif asked_danger and _is_negative_turn(latest_text):
+            state.danger_active = False
+        elif asked_danger and _is_positive_turn(latest_text):
             state.danger_active = True
 
     return state
@@ -378,17 +391,27 @@ def _apply_medical_turn_context(
             state.conscious = False
         elif _has_any(latest_text, ["清醒", "有反應", "叫得醒", "意識清楚"]):
             state.conscious = True
+        elif asked_conscious and _is_negative_turn(latest_text):
+            state.conscious = False
+        elif asked_conscious and _is_positive_turn(latest_text):
+            state.conscious = True
 
     if asked_breathing or _has_any(latest_text, ["呼吸", "喘", "喘不過氣", "沒呼吸", "呼吸困難"]):
         if _has_any(latest_text, ["呼吸正常", "正常呼吸", "沒有呼吸困難", "沒有喘", "不喘"]):
             state.breathing_difficulty = False
         elif _has_any(latest_text, ["呼吸困難", "喘不過氣", "很喘", "沒呼吸", "沒有呼吸", "嘴唇發紫"]):
             state.breathing_difficulty = True
+        elif asked_breathing and _is_negative_turn(latest_text):
+            state.breathing_difficulty = False
+        elif asked_breathing and _is_positive_turn(latest_text):
+            state.breathing_difficulty = True
 
     if asked_symptoms or _has_any(latest_text, ["受傷", "流血", "胸痛", "發燒", "抽搐", "骨折"]):
         if _is_negative_turn(latest_text):
             state.people_injured = False
         elif _has_any(latest_text, ["受傷", "流血", "胸痛", "抽搐", "骨折", "大量出血"]):
+            state.people_injured = True
+        elif asked_symptoms and _is_positive_turn(latest_text):
             state.people_injured = True
         if _has_any(latest_text, ["發燒", "燒到", "高燒"]):
             state.fever = True
@@ -410,11 +433,17 @@ def _apply_fire_turn_context(
             state.danger_active = False
         elif _has_any(latest_text, ["還在燒", "火很大", "濃煙", "冒煙", "火勢", "燒起來"]):
             state.danger_active = True
+        elif asked_fire_active and _is_negative_turn(latest_text):
+            state.danger_active = False
+        elif asked_fire_active and _is_positive_turn(latest_text):
+            state.danger_active = True
 
     if asked_trapped or _has_any(latest_text, ["受困", "裡面有人", "受傷", "吸入濃煙", "嗆到"]):
         if _is_negative_turn(latest_text):
             state.people_injured = False
         elif _has_any(latest_text, ["受困", "裡面有人", "受傷", "吸入濃煙", "嗆到"]):
+            state.people_injured = True
+        elif asked_trapped and _is_positive_turn(latest_text):
             state.people_injured = True
 
     return state
@@ -434,11 +463,17 @@ def _apply_traffic_turn_context(
             state.people_injured = False
         elif _has_any(latest_text, ["受傷", "受困", "流血", "倒地", "摔倒", "卡在車內"]):
             state.people_injured = True
+        elif asked_injury and _is_positive_turn(latest_text):
+            state.people_injured = True
 
     if asked_road_danger or _has_any(latest_text, ["車道", "路中間", "漏油", "冒煙", "阻擋", "還在路上"]):
         if _has_any(latest_text, ["沒有阻擋", "移到旁邊", "不在車道", "沒有漏油", "沒有冒煙"]):
             state.danger_active = False
         elif _has_any(latest_text, ["路中間", "車道", "漏油", "冒煙", "阻擋", "還在路上"]):
+            state.danger_active = True
+        elif asked_road_danger and _is_negative_turn(latest_text):
+            state.danger_active = False
+        elif asked_road_danger and _is_positive_turn(latest_text):
             state.danger_active = True
 
     return state
@@ -916,6 +951,7 @@ def process_chat_request(
     context = " ".join(m.content for m in messages if m.role == "user").strip()
     latest_text = latest_user_text(messages)
     conversation_state = extract_conversation_state(messages)
+    conversation_state = _apply_natural_turn_context(conversation_state, messages)
 
     if not context:
         return _EMPTY_CONTEXT_RESPONSE
@@ -942,6 +978,12 @@ def process_chat_request(
         ex.category = normalize_category_name(ex.category)
         ex = apply_turn_context(messages, ex)
         ex = merge_extracted(conversation_state, ex)
+        # Re-apply slot resolver after merge so it fills any slots the LLM left as None
+        ex = _apply_natural_turn_context(ex, messages)
+        # Plan B: LLM slot extractor for phrasing variants rule-based system missed
+        if llm_is_ready() and len(latest_text.strip()) > 4:
+            from backend.services.semantic import llm_extract_slots
+            ex = llm_extract_slots(latest_text, _last_assistant_text(messages), ex)
         if client_location_text:
             ex.location = client_location_text
         if not any(token in context for token in ["發燒", "高燒", "發熱", "沒有發燒"]):

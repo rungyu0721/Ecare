@@ -107,7 +107,7 @@ def build_incident_acknowledgement(ex: Extracted) -> str:
     if ex.category == "火災":
         return "收到，現場疑似有火災，我先幫你確認重點。"
     if ex.category == "暴力事件":
-        return "收到，現場可能有衝突或人身危險，我先幫你整理。"
+        return "收到，這聽起來有衝突或人身危險。請先保持距離，我會幫你整理重點。"
     if ex.category == "交通事故":
         return "收到，現場看起來有交通事故，我先幫你整理。"
     if ex.category == "可疑人士":

@@ -356,9 +356,9 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
             return medical_follow_up_question(ex, risk_level)
         if any(token in symptom_summary for token in ["暈倒", "昏倒"]) or ex.people_injured is True and risk_level == "High":
             if ex.conscious is None and ex.breathing_difficulty is None:
-                return f"{ref}現在叫得醒、有反應嗎？呼吸是否正常？如果叫不醒或呼吸異常，請立刻撥打 119。"
+                return f"{ref}現在叫得醒、有反應嗎？呼吸是否正常？如果叫不醒或呼吸異常，系統會列為高風險通報，請保持手機可接通。"
             if ex.conscious is None:
-                return f"{ref}現在叫得醒、有反應嗎？如果叫不醒，請立刻撥打 119。"
+                return f"{ref}現在叫得醒、有反應嗎？如果叫不醒，請保持手機可接通並準備依救援指示處理。"
             if ex.breathing_difficulty is None:
                 return f"{ref}現在呼吸是否正常？有沒有沒有呼吸、喘不過氣，或嘴唇發紫？"
         if ex.conscious is None and ex.breathing_difficulty is None:
@@ -391,7 +391,7 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
 
     if ex.category == "交通事故":
         if ex.people_injured is None:
-            return "有人受傷、受困，或需要立刻叫救護車嗎？"
+            return "現場有沒有人受傷或被困在車內？例如沒反應、流血或卡住，我會優先整理成高風險通報。"
         if ex.danger_active is None:
             return "事故車輛現在還卡在車道上，或現場還有持續危險嗎？"
         return "事故大概是在路口、巷口，還是主要幹道？"
@@ -446,7 +446,9 @@ def next_question_from_semantic(
         return next_question(ex, risk_level)
 
     if ex.category in ["噪音", "可疑人士", "暴力事件", "火災", "交通事故"]:
-        return default_question or next_question(ex, risk_level)
+        # Always use the structured flow question so the LLM can't jump ahead
+        # to end-of-flow questions while critical slots are still pending
+        return next_question(ex, risk_level) or default_question
 
     if risk_level in ["Medium", "High"] and semantic.entities.injured is None and ex.people_injured is None:
         return "現場有人受傷、失去意識，或需要立刻送醫嗎？"

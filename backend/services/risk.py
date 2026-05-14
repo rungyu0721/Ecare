@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List
 
 from backend.services.incident_taxonomy import match_incident_taxonomy
-from backend.services.v4_event_semantics import v4_risk_ceiling, v4_risk_floor
+from backend.services.v4_event_semantics import contains_negated, contains_uncertain, v4_risk_ceiling, v4_risk_floor
 
 
 # ======================
@@ -140,8 +140,10 @@ def has_high_risk_context_signal(text: str) -> bool:
         return True
     if any(phrase in text for phrase in DIRECT_HIGH_RISK_PHRASES):
         return True
+    weapon_terms = ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]
+    has_weapon_negation = contains_negated(text, weapon_terms) or contains_uncertain(text, weapon_terms)
     return any([
-        has_contextual_pattern(text, VIOLENCE_HIGH_CONTEXT_PATTERNS),
+        (not has_weapon_negation and has_contextual_pattern(text, VIOLENCE_HIGH_CONTEXT_PATTERNS)),
         has_contextual_pattern(text, MEDICAL_HIGH_CONTEXT_PATTERNS),
         has_contextual_pattern(text, TRAFFIC_HIGH_CONTEXT_PATTERNS),
     ])
