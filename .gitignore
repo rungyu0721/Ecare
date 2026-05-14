@@ -36,7 +36,13 @@ scripts/audit_training_data.py
 scripts/clean_training_data.py
 scripts/merge_lora.py
 scripts/test_lora_inference.py
-scripts/data/
+
+# 大型訓練資料集（不進 git，體積過大）
+scripts/data/ecare_train_*.jsonl
+scripts/data/v4_standard.jsonl
+scripts/data/v4_multiturn.jsonl
+scripts/data/v4_semantic_candidates*.jsonl
+# 小型測試/語意案例（v4_context_cases.jsonl, v4_semantic_cases.jsonl 應追蹤）
 
 # 下載的 wheel 檔
 *.whl

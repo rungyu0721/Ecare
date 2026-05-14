@@ -1,200 +1,166 @@
 # E-CARE
 
-## Ollama Qwen2.5 快速切換
+緊急事件關懷對話系統。後端使用 FastAPI + Ollama（本地 LLM），前端使用 Flutter。
 
-目前專案已可直接使用 `Ollama + Qwen2.5` 作為本地聊天模型，不需要再經過 LM Studio。
+## 架構
 
-```powershell
-ollama create ecare-v4:latest -f Modelfile.v4
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\start_backend.ps1
 ```
-
-Current app testing should use `ecare-v4:latest`. Older local models such as `ecare:latest` and `ecare-qwen2.5:latest` are kept only for comparison.
-
-如果你本機同時有 `ecare-qwen2.5:latest` 和 `ecare:latest`，請優先使用 `ecare:latest`。前者是舊的 Ollama 模型，還帶著修正前的 template。
-
-預設會使用：
-
-- `LLM_PROVIDER=ollama`
-- `LLM_MODEL=ecare-v4:latest`
-- `OLLAMA_BASE_URL=http://127.0.0.1:11434`
-
-更完整的本地模型設定請看 `LOCAL_LLM_SETUP.md`。
-
-E-CARE 是一個緊急事件協助專案，目前架構分成兩部分：
-
-- `backend/`：FastAPI 後端，負責聊天分析、語音分析、通報紀錄
-- `flutter_app/`：Flutter 前端，取代原本的 Web / Capacitor 版本
-
-## 專案結構
-
-```text
 Ecare/
-├─ backend/
-├─ flutter_app/
-├─ API_SPEC.md
-└─ README.md
+├── backend/          # FastAPI 後端（聊天、語音、通報）
+├── flutter_app/      # Flutter 前端（Windows / Android / iOS）
+├── scripts/          # 訓練腳本與測試工具
+├── Modelfile         # Ollama 模型設定（ecare-v4）
+├── docker-compose.yml
+└── requirements.txt
 ```
 
-## 開發需求
+## 開發環境需求
 
-- Python 3.11 以上
-- Flutter SDK
+- Python 3.11+
+- Flutter SDK 3.3+
+- [Ollama](https://ollama.com)（本地 LLM）
 - PostgreSQL
-- FFmpeg
+- Neo4j（選用）
+- FFmpeg（語音功能）
 
-## 後端啟動方式
+---
 
-### 建議方式：直接使用啟動腳本
+## 後端啟動
 
-請在專案根目錄 `d:\Ecare\Ecare` 執行：
+### 1. 建立 Ollama 模型
+
+```powershell
+ollama create ecare-v4:latest -f Modelfile
+```
+
+### 2. 啟動後端
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\start_backend.ps1
 ```
 
-`start_backend.ps1` 會先幫你設定：
+`start_backend.ps1` 會自動從 `.env` 載入環境變數（資料庫、Neo4j、LLM 設定）。
 
-- PostgreSQL 連線資訊
-- Neo4j 連線資訊
-- Gemma / LLM 相關環境變數
-- 優先使用 `.venv\Scripts\python.exe`
+**啟動成功應看到：**
+```
+PostgreSQL 已連線
+Ollama 已初始化
+Emotion model 已載入
+```
 
-因此平常開發請優先用 `.\start_backend.ps1`，不要直接手動打 `uvicorn`。
+### 環境變數（.env）
 
-如果你看到下面這些訊息，通常代表你是直接跑了 `uvicorn`，沒有載入腳本內的環境變數：
+複製 `.env.example` 為 `.env` 並填入設定：
 
-- `PostgreSQL 連線失敗 ... localhost:5432`
-- `找不到 GOOGLE_API_KEY，/chat 將使用 fallback`
-- `Neo4j 連線失敗：NEO4J_URI 或 NEO4J_PASSWORD 尚未設定`
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=ecare-v4:latest
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 
-### 手動啟動方式
+DB_HOST=your_postgres_host
+DB_PORT=5432
+DB_NAME=ecare_db
+DB_USER=postgres
+DB_PASSWORD=your_password
 
-只有在你想自行排錯或改連線設定時，才建議手動啟動。
+NEO4J_URI=bolt://your_neo4j_host:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
+```
 
-1. 建立並啟用虛擬環境：
+### 手動安裝套件（首次設定）
 
 ```powershell
-cd C:\Users\User\Documents\Ecare
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-2. 安裝後端需要的套件  
-如果你之後有整理 `requirements.txt`，就改成用那份安裝。  
-目前可先安裝後端實際使用到的套件：
+> GPU 版 torch（CUDA）需另外從 PyTorch 官網安裝，requirements.txt 記錄的是目前 .venv 的版本。
+
+---
+
+## Docker 啟動（PostgreSQL + Neo4j）
+
+只需啟動資料庫服務時使用（Ollama 仍在宿主機執行）：
 
 ```powershell
-pip install fastapi uvicorn whisper psycopg2-binary numpy librosa joblib python-multipart openai-whisper google-genai
+docker compose up -d postgres neo4j
 ```
 
-3. 設定資料庫環境變數：
+或完整啟動含後端：
 
 ```powershell
-$env:DB_HOST="192.168.50.7"
-$env:DB_PORT="5432"
-$env:DB_NAME="ecare_db"
-$env:DB_USER="postgres"
-$env:DB_PASSWORD="你的密碼"
+docker compose up -d
 ```
 
-4. 如果要使用 Gemini，也要設定：
+---
+
+## Flutter 前端啟動
 
 ```powershell
-$env:GOOGLE_API_KEY="你的 API Key"
-```
-
-5. 啟動 FastAPI：
-
-```powershell
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-如果啟動成功，通常會看到：
-
-- `PostgreSQL 已連線`
-- `Gemini 已初始化`
-- `Emotion model 已載入`
-
-## Flutter 前端啟動方式
-
-1. 開新的終端機：
-
-```powershell
-cd C:\Users\User\Documents\Ecare\flutter_app
-```
-
-2. 安裝 Flutter 套件：
-
-```powershell
+cd flutter_app
 flutter pub get
-```
-
-3. 啟動桌面版：
-
-```powershell
 flutter run -d windows
 ```
 
-## 目前本機開發流程
+預設連線後端：`http://127.0.0.1:8000`
 
-建議同時開兩個終端機：
+部署到其他裝置時指定後端位址：
 
-- 終端機 1：跑 FastAPI 後端
-- 終端機 2：跑 Flutter 前端
-
-目前 Flutter 預設連線位址是：
-
-```text
-http://127.0.0.1:8000
+```powershell
+flutter run -d android --dart-define=API_BASE_URL=http://192.168.x.x:8000
 ```
 
-設定位置在：
+---
 
-```text
-flutter_app/lib/src/config/api_config.dart
+## 測試
+
+### 單元測試（不需要 GPU 或資料庫）
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
 ```
+
+### 整合測試（需要後端正在執行）
+
+```powershell
+.\.venv\Scripts\python.exe scripts/test_chat_scenarios.py
+.\.venv\Scripts\python.exe scripts/test_v4_semantics.py
+```
+
+---
 
 ## 目前功能
 
-- 聊天頁串接 `/chat`
-- 語音上傳串接 `/audio`
-- 緊急通報與通報紀錄串接 `/reports`
-- 個人資料本地儲存
-- 位置抓取與地址顯示 fallback
+- `/chat`：多輪對話、風險評分、語意理解、slot 填充
+- `/audio`：語音轉文字（Whisper）+ 情緒分析
+- `/reports`：緊急通報紀錄 CRUD（PostgreSQL）
+
+---
 
 ## 注意事項
 
-- 不要把資料庫密碼或 API key commit 到 GitHub
-- `.venv/`、`node_modules/`、Flutter build 產物、編輯器本機設定都已經在 `.gitignore`
-- 舊的 Web / Capacitor 前端已從 repo 移除
+- **不要 commit `.env`**（已在 .gitignore）
+- `.venv/`、Flutter build 產物、模型 .gguf 均已 gitignore
+- `scripts/output/` 的模型檔不進 git，請自行備份
 
 ## 常用指令
 
-後端：
-
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+# 後端
 .\start_backend.ps1
-.\.venv\Scripts\Activate.ps1
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
-deactivate
-```
 
-Flutter：
+# 測試
+.\.venv\Scripts\python.exe -m pytest
 
-```powershell
-flutter pub get
-flutter run -d windows
-```
+# Flutter
+cd flutter_app && flutter run -d windows
 
-Git：
-
-```powershell
+# Git
 git status
 git add -A
-git commit -m "你的訊息"
+git commit -m "訊息"
 git push
 ```

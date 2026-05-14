@@ -94,7 +94,7 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 # LLM 設定
 # ======================
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 LLM_MODEL_NAME = os.getenv(
     "LLM_MODEL",
     os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
