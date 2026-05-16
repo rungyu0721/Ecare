@@ -107,6 +107,10 @@ class ChatResponse {
     required this.nextQuestion,
     required this.extracted,
     required this.semantic,
+    this.voicePrompt,
+    this.voicePriority,
+    this.shouldSpeak = false,
+    this.reportStatusHint,
   });
 
   final String reply;
@@ -116,6 +120,10 @@ class ChatResponse {
   final String? nextQuestion;
   final ExtractedData extracted;
   final SemanticData semantic;
+  final String? voicePrompt;
+  final String? voicePriority;
+  final bool shouldSpeak;
+  final String? reportStatusHint;
 
   factory ChatResponse.fromJson(Map<String, dynamic> json) {
     return ChatResponse(
@@ -130,6 +138,10 @@ class ChatResponse {
       semantic: SemanticData.fromJson(
         (json['semantic'] as Map<String, dynamic>?) ?? <String, dynamic>{},
       ),
+      voicePrompt: json['voice_prompt'] as String?,
+      voicePriority: json['voice_priority'] as String?,
+      shouldSpeak: json['should_speak'] as bool? ?? false,
+      reportStatusHint: json['report_status_hint'] as String?,
     );
   }
 }

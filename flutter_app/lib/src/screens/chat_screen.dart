@@ -755,7 +755,30 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
+    final reportStatus = _reportStatusText(response.reportStatusHint);
+    if (reportStatus != null) {
+      items.add(
+        _IncidentStatusPill(
+          icon: Icons.assignment_turned_in_outlined,
+          label: '通報',
+          value: reportStatus,
+        ),
+      );
+    }
+
     return items;
+  }
+
+  String? _reportStatusText(String? statusHint) {
+    return switch (statusHint?.trim()) {
+      'monitoring' => '持續觀察',
+      'high_risk_detected' => '高風險已偵測',
+      'report_recommended' => '建議建立通報',
+      'report_created' => '通報已建立',
+      'waiting_for_update' => '等待現場更新',
+      'none' || null || '' => null,
+      _ => '狀態更新',
+    };
   }
 
   String _fallbackText(String? value, String fallback) {
@@ -1261,6 +1284,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       riskLevel: bannerRiskLevel ?? 'Low',
                       statusPills: incidentStatusPills,
                       dispatchAdvice: _latestResponse?.extracted.dispatchAdvice,
+                      voicePrompt: _latestResponse?.voicePrompt,
+                      shouldSpeak: _latestResponse?.shouldSpeak ?? false,
                     ),
                   ),
                 Expanded(
@@ -1714,11 +1739,15 @@ class _IncidentSnapshotPanel extends StatelessWidget {
     required this.riskLevel,
     required this.statusPills,
     this.dispatchAdvice,
+    this.voicePrompt,
+    this.shouldSpeak = false,
   });
 
   final String riskLevel;
   final List<_IncidentStatusPill> statusPills;
   final String? dispatchAdvice;
+  final String? voicePrompt;
+  final bool shouldSpeak;
 
   String get _title {
     return switch (riskLevel) {
@@ -1739,6 +1768,7 @@ class _IncidentSnapshotPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final advice = dispatchAdvice?.trim() ?? '';
+    final prompt = voicePrompt?.trim() ?? '';
 
     return Container(
       width: double.infinity,
@@ -1812,6 +1842,52 @@ class _IncidentSnapshotPanel extends StatelessWidget {
                         fontSize: 12,
                         height: 1.45,
                         fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (prompt.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 9),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: shouldSpeak
+                    ? const Color(0xFFFFF0EA)
+                    : const Color(0xFFFFF7EA),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: shouldSpeak
+                      ? EcareApp.primary.withValues(alpha: 0.35)
+                      : const Color(0xFFEBDCC3),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Icon(
+                    shouldSpeak
+                        ? Icons.volume_up_rounded
+                        : Icons.record_voice_over_outlined,
+                    size: 15,
+                    color: shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      prompt,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color:
+                            shouldSpeak ? EcareApp.primaryDark : EcareApp.text,
+                        fontSize: 12,
+                        height: 1.45,
+                        fontWeight:
+                            shouldSpeak ? FontWeight.w800 : FontWeight.w600,
                       ),
                     ),
                   ),

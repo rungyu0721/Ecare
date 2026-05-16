@@ -98,6 +98,10 @@ http://192.168.50.254:8000
   "risk_level": "High",
   "should_escalate": true,
   "next_question": "你現在人在哪裡？請告訴我地址、明顯地標，或附近路名。",
+  "voice_prompt": "系統已列為高風險通報。請保持手機可接通，確認患者是否有正常呼吸。",
+  "voice_priority": "high",
+  "should_speak": true,
+  "report_status_hint": "report_recommended",
   "extracted": {
     "category": "醫療急症",
     "location": "台北車站",
@@ -129,8 +133,21 @@ http://192.168.50.254:8000
 - `risk_level`: `Low`、`Medium`、`High`
 - `should_escalate`: 是否建議升級處理
 - `next_question`: 下一個追問
+- `voice_prompt`: 適合語音播報的短句，通常比 `reply` 更短、更行動導向
+- `voice_priority`: 語音提示優先度，可能值為 `low`、`medium`、`high`
+- `should_speak`: 前端是否建議播報 `voice_prompt`
+- `report_status_hint`: 通報狀態提示，供前端顯示 UI 狀態
 - `extracted`: 事件抽取結果
 - `semantic`: 文字語意理解結果
+
+### `report_status_hint` 可能值
+
+- `none`: 不需要顯示通報狀態
+- `monitoring`: 持續觀察中
+- `high_risk_detected`: 已偵測高風險，但資料仍不完整
+- `report_recommended`: 建議建立通報
+- `report_created`: 通報已建立
+- `waiting_for_update`: 等待現場更新
 
 ### `extracted` 欄位
 
@@ -331,7 +348,7 @@ multipart/form-data
 
 - `400`: 請求格式錯誤
 - `500`: 後端處理錯誤
-- `503`: 模型未載入完成，例如 Whisper / Emotion model / Gemini 未就緒
+- `503`: 模型或服務未載入完成，例如 Whisper、Emotion model、Ollama v4 未就緒
 
 建議組員串接時至少處理：
 
@@ -345,9 +362,9 @@ multipart/form-data
 
 - `POST /chat` 的 `audio_context` 是可選欄位
 - `POST /audio` 上傳時必須用 `multipart/form-data`
-- `POST /reports` 目前是記憶體暫存，若 FastAPI 重啟，資料會消失
-- 若要正式接資料庫，建議把 `REPORTS = []` 改成真正 DB 存取
-- `GOOGLE_API_KEY` 沒設定時，`/chat` 會走 fallback 邏輯，不一定會有完整 LLM 品質
+- `POST /reports` 會寫入 PostgreSQL；資料庫不可用時後端會回傳錯誤
+- 目前主要 LLM provider 是 Ollama，建議使用 `LLM_MODEL=ecare-v4:latest`
+- 若 Ollama 或指定模型未啟動，`/chat` 會走 fallback 邏輯，品質會低於 v4 模型
 
 ---
 
@@ -362,4 +379,3 @@ multipart/form-data
 5. 建議資料庫欄位清單
 6. 是否需要認證
 7. 哪些欄位可能為 `null`
-

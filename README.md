@@ -169,6 +169,10 @@ flutter analyze
 
 詳細格式請看 `API_SPEC.md`。
 
+## Roadmap
+
+後續功能待辦與語音播報規劃請看 `docs/roadmap.md`。
+
 ## 訓練與語意資料
 
 重要資料：
