@@ -13,6 +13,7 @@ import '../services/audio_playback_service.dart';
 import '../services/audio_service.dart';
 import '../services/location_service.dart';
 import '../services/profile_service.dart';
+import '../services/voice_prompt_service.dart';
 import '../widgets/risk_banner.dart';
 import 'records_screen.dart';
 
@@ -30,6 +31,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ApiService _apiService = ApiService();
   final AudioService _audioService = AudioService();
   final AudioPlaybackService _audioPlaybackService = AudioPlaybackService();
+  final VoicePromptService _voicePromptService = VoicePromptService();
   final LocationService _locationService = LocationService();
   final ProfileService _profileService = ProfileService();
   final TextEditingController _inputController = TextEditingController();
@@ -57,7 +59,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isRecording = false;
   bool _isProcessingAudio = false;
   StreamSubscription<AudioPlaybackSnapshot>? _audioPlaybackSubscription;
+  StreamSubscription<VoicePromptSnapshot>? _voicePromptSubscription;
   AudioPlaybackSnapshot _playbackSnapshot = const AudioPlaybackSnapshot();
+  VoicePromptSnapshot _voicePromptSnapshot = const VoicePromptSnapshot();
   Timer? _recordingTicker;
   DateTime? _recordingStartedAt;
   Duration _recordingDuration = Duration.zero;
@@ -78,6 +82,15 @@ class _ChatScreenState extends State<ChatScreen> {
         _playbackSnapshot = snapshot;
       });
     });
+    _voicePromptSubscription =
+        _voicePromptService.snapshots.listen((VoicePromptSnapshot snapshot) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _voicePromptSnapshot = snapshot;
+      });
+    });
   }
 
   @override
@@ -86,7 +99,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.dispose();
     _recordingTicker?.cancel();
     _audioPlaybackSubscription?.cancel();
+    _voicePromptSubscription?.cancel();
     _audioPlaybackService.dispose();
+    _voicePromptService.dispose();
     _audioService.dispose();
     super.dispose();
   }
@@ -138,11 +153,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final category = response.extracted.category?.trim() ?? '';
-    final hasConfirmedIncident = category.isNotEmpty &&
-        category != '待確認' &&
-        category != '一般事件';
-    final needsOngoingUpdate =
-        hasConfirmedIncident || response.riskLevel != 'Low' || response.riskScore >= 0.5;
+    final hasConfirmedIncident =
+        category.isNotEmpty && category != '待確認' && category != '一般事件';
+    final needsOngoingUpdate = hasConfirmedIncident ||
+        response.riskLevel != 'Low' ||
+        response.riskScore >= 0.5;
 
     if (needsOngoingUpdate) {
       return '回報現場新的變化...';
@@ -233,11 +248,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
       final nextQ = response.nextQuestion;
       final showNext = _shouldAppendNextQuestion(response.reply, nextQ);
-      final combined =
-          showNext && nextQ != null ? '${response.reply}\n\n$nextQ' : response.reply;
+      final combined = showNext && nextQ != null
+          ? '${response.reply}\n\n$nextQ'
+          : response.reply;
       await _appendAssistantMessageAnimated(combined);
 
       _scrollToBottom();
+      if (response.shouldSpeak) {
+        unawaited(_speakVoicePrompt(response.voicePrompt, isAutomatic: true));
+      }
 
       if (response.shouldEscalate && !_reportCreated) {
         _showEscalationDialog(response);
@@ -394,7 +413,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Set<String> _questionTopics(String text) {
-    final normalized = text.replaceAll(RegExp(r'[\s，,。！？!?、：:；;（）()「」『』]+'), '');
+    final normalized =
+        text.replaceAll(RegExp(r'[\s，,。！？!?、：:；;（）()「」『』]+'), '');
     final topicGroups = <String, List<String>>{
       'location': <String>['地點', '位置', '在哪', '哪裡', '地址', '路口'],
       'injury': <String>['受傷', '傷者', '流血', '送醫', '救護車'],
@@ -480,6 +500,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _startRecording() async {
     try {
+      await _voicePromptService.stop();
       await _audioPlaybackService.stop();
       final directory = Directory.systemTemp;
       final path =
@@ -628,9 +649,40 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
+      await _voicePromptService.stop();
       await _audioPlaybackService.toggle(filePath);
     } catch (_) {
       _showSnackBar('\u7121\u6cd5\u64ad\u653e\u9019\u6bb5\u9304\u97f3');
+    }
+  }
+
+  Future<void> _toggleVoicePrompt(String? prompt) async {
+    if (_voicePromptSnapshot.isSpeaking) {
+      await _voicePromptService.stop();
+      return;
+    }
+    await _speakVoicePrompt(prompt);
+  }
+
+  Future<void> _speakVoicePrompt(
+    String? prompt, {
+    bool isAutomatic = false,
+  }) async {
+    final text = prompt?.trim() ?? '';
+    if (text.isEmpty) {
+      if (!isAutomatic) {
+        _showSnackBar('目前沒有可播報的語音提示');
+      }
+      return;
+    }
+
+    try {
+      await _audioPlaybackService.stop();
+      await _voicePromptService.speak(text);
+    } catch (_) {
+      if (!isAutomatic) {
+        _showSnackBar('目前無法播報語音提示，請先看畫面文字。');
+      }
     }
   }
 
@@ -1286,6 +1338,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       dispatchAdvice: _latestResponse?.extracted.dispatchAdvice,
                       voicePrompt: _latestResponse?.voicePrompt,
                       shouldSpeak: _latestResponse?.shouldSpeak ?? false,
+                      isVoiceSpeaking: _voicePromptSnapshot.isSpeaking,
+                      onToggleVoicePrompt: () =>
+                          _toggleVoicePrompt(_latestResponse?.voicePrompt),
                     ),
                   ),
                 Expanded(
@@ -1741,6 +1796,8 @@ class _IncidentSnapshotPanel extends StatelessWidget {
     this.dispatchAdvice,
     this.voicePrompt,
     this.shouldSpeak = false,
+    this.isVoiceSpeaking = false,
+    this.onToggleVoicePrompt,
   });
 
   final String riskLevel;
@@ -1748,6 +1805,8 @@ class _IncidentSnapshotPanel extends StatelessWidget {
   final String? dispatchAdvice;
   final String? voicePrompt;
   final bool shouldSpeak;
+  final bool isVoiceSpeaking;
+  final VoidCallback? onToggleVoicePrompt;
 
   String get _title {
     return switch (riskLevel) {
@@ -1866,12 +1925,14 @@ class _IncidentSnapshotPanel extends StatelessWidget {
                 ),
               ),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: <Widget>[
                   Icon(
-                    shouldSpeak
-                        ? Icons.volume_up_rounded
-                        : Icons.record_voice_over_outlined,
+                    isVoiceSpeaking
+                        ? Icons.graphic_eq_rounded
+                        : shouldSpeak
+                            ? Icons.volume_up_rounded
+                            : Icons.record_voice_over_outlined,
                     size: 15,
                     color: shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
                   ),
@@ -1888,6 +1949,29 @@ class _IncidentSnapshotPanel extends StatelessWidget {
                         height: 1.45,
                         fontWeight:
                             shouldSpeak ? FontWeight.w800 : FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  SizedBox.square(
+                    dimension: 34,
+                    child: IconButton(
+                      tooltip: isVoiceSpeaking ? '停止播報' : '重播語音提示',
+                      onPressed: onToggleVoicePrompt,
+                      padding: EdgeInsets.zero,
+                      iconSize: 19,
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.white.withValues(alpha: 0.82),
+                        foregroundColor:
+                            shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      icon: Icon(
+                        isVoiceSpeaking
+                            ? Icons.stop_rounded
+                            : Icons.play_arrow_rounded,
                       ),
                     ),
                   ),

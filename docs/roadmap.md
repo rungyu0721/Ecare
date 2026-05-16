@@ -16,8 +16,8 @@
 - [x] 後端 `ChatResponse` 新增 `should_speak`
 - [x] 後端 `ChatResponse` 新增 `report_status_hint`
 - [x] Flutter 解析並顯示 `voice_prompt` / `report_status_hint`
-- [ ] Flutter 高風險時提供「重播語音提示」按鈕
-- [ ] Flutter 加入本機 TTS 作為短期 demo 方案
+- [x] Flutter 高風險時提供「重播語音提示」按鈕
+- [x] Flutter 加入本機 TTS 作為短期 demo 方案
 - [ ] 評估本地部署 TTS 模型，優先測試 `CosyVoice2-0.5B`
 - [ ] 將雲端 TTS API 作為 fallback，而不是第一優先
 
