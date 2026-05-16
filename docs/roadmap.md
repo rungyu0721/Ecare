@@ -19,6 +19,10 @@
 - [x] Flutter 高風險時提供「重播語音提示」按鈕
 - [x] Flutter 加入本機 TTS 作為短期 demo 方案
 - [ ] 評估本地部署 TTS 模型，優先測試 `CosyVoice2-0.5B`
+  - [x] 新增獨立實驗文件：`docs/cosyvoice2_experiment.md`
+  - [x] 新增模型下載腳本：`scripts/tts/download_cosyvoice2.py`
+  - [x] 新增 wav 產生 probe：`scripts/tts/cosyvoice2_probe.py`
+  - [ ] 實測繁中語音品質與延遲
 - [ ] 將雲端 TTS API 作為 fallback，而不是第一優先
 
 ### 本地 TTS 模型整合方向

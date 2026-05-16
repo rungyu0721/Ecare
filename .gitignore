@@ -17,6 +17,7 @@ local.properties
 
 # Runtime and generated data
 datasets/
+external/
 *.wav
 training.log
 nohup.out

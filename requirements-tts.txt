@@ -1,0 +1,9 @@
+# Optional dependencies for local TTS experiments.
+# Install these in a separate venv or after the normal backend deps.
+#
+# CosyVoice itself still needs its own repository requirements:
+#   git clone https://github.com/FunAudioLLM/CosyVoice.git external/CosyVoice
+#   pip install -r external/CosyVoice/requirements.txt
+
+huggingface-hub>=0.23,<1.0
+torchaudio>=2.1
