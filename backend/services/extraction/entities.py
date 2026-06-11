@@ -187,6 +187,8 @@ def medical_follow_up_question(ex: Extracted, risk_level: str) -> str:
     if ex.conscious is True and any(token in symptom_summary for token in ["擦傷", "小傷口", "輕傷"]):
         return f"{ref}傷口現在有持續流血、需要止血包紮，或還有頭暈、想吐、明顯疼痛加重嗎？"
     if ex.conscious is False:
+        if ex.aed_confirmed:
+            return "請依照 AED 語音指示繼續操作，不要中斷；電擊後立刻繼續按壓，直到救護人員接手。"
         if ex.reporter_role == "照顧者/家屬":
             return "你的家人目前沒有反應，系統已列為高風險通報。請保持手機可接通，現在確認胸口是否有起伏、是否有正常呼吸；如果沒有正常呼吸，請開擴音聽救援指示，並請旁邊的人找 AED。"
         return f"{ref}目前沒有反應，系統已列為高風險通報。請先確認你自己安全；如果你就在傷者旁邊，請確認胸口是否有起伏或有沒有正常呼吸。周圍有車流、火煙、暴力或其他明顯危險時，不要靠近。"
@@ -206,15 +208,23 @@ def enrich_extracted_details(ex: Extracted, text: str) -> Extracted:
     if role:
         ex.reporter_role = role
 
-    if any(keyword in text for keyword in ["意識清楚", "意識清醒", "人是清醒的", "目前清醒", "叫得醒"]):
+    if any(keyword in text for keyword in ["意識清楚", "意識清醒", "人是清醒的", "目前清醒", "叫得醒", "有在動"]):
         ex.conscious = True
-    elif any(keyword in text for keyword in ["意識不清", "昏迷", "失去意識", "叫不醒", "沒反應", "沒有反應", "無反應", "暈過去", "昏過去"]):
+    elif any(keyword in text for keyword in ["意識不清", "昏迷", "失去意識", "叫不醒", "沒反應", "沒有反應", "無反應", "暈過去", "昏過去", "沒有在呼吸", "沒在呼吸", "好像沒有在呼吸"]):
         ex.conscious = False
 
-    if any(keyword in text for keyword in ["呼吸困難", "喘不過氣", "吸不到氣", "沒辦法呼吸", "呼吸很喘", "很喘", "沒呼吸", "沒有呼吸", "快沒氣"]):
+    if any(keyword in text for keyword in ["呼吸困難", "喘不過氣", "吸不到氣", "沒辦法呼吸", "呼吸很喘", "很喘", "沒呼吸", "沒有呼吸", "快沒氣", "沒有在呼吸", "沒在呼吸", "好像沒有在呼吸"]):
         ex.breathing_difficulty = True
     elif any(keyword in text for keyword in ["呼吸正常", "沒有呼吸困難", "沒有喘", "呼吸沒問題", "看起來呼吸正常"]):
         ex.breathing_difficulty = False
+
+    # AED/CPR usage implies an unresponsive patient
+    if any(k in text for k in ["CPR", "胸外按壓", "AED"]) and ex.conscious is None:
+        ex.conscious = False
+
+    # Safety confirmed → danger no longer active
+    if any(k in text for k in ["在安全的地方", "已經安全", "到安全的", "現在安全", "已到安全"]):
+        ex.danger_active = False
 
     if any(keyword in text for keyword in ["發燒", "高燒"]):
         ex.fever = True
@@ -289,13 +299,16 @@ def simple_extract(text: str) -> Extracted:
             "無反應", "叫不醒", "沒呼吸", "抽搐", "心臟痛", "胸悶",
             "半邊無力", "嘴歪", "講話不清楚", "頭暈", "胸痛", "呼吸困難",
             "喘不過氣", "吸不到氣", "不舒服", "發燒", "嘔吐",
+            "AED", "CPR", "胸外按壓", "救護車",
         ]
     ):
+        ex.category = "醫療急症"
+    elif any(k in text for k in ["沒有在呼吸", "沒在呼吸"]):
         ex.category = "醫療急症"
     else:
         ex.category = "待確認"
 
-    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐", "噎到", "哽塞", "噎住", "臉發紫", "中暑", "熱衰竭", "癲癇"]
+    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐", "噎到", "哽塞", "噎住", "臉發紫", "中暑", "熱衰竭", "癲癇", "AED", "CPR", "胸外按壓", "救護車", "沒有在呼吸", "沒在呼吸"]
     if contains_negated(text, ["受傷", "流血", "昏倒", "呼吸困難", "嘔吐"]):
         ex.people_injured = False
     elif any(k in text for k in injury_terms):
@@ -357,6 +370,8 @@ def merge_extracted(base: Extracted, incoming: Extracted) -> Extracted:
         base.breathing_difficulty = incoming.breathing_difficulty
     if incoming.fever is not None:
         base.fever = incoming.fever
+    if incoming.aed_confirmed:
+        base.aed_confirmed = True
     if incoming.symptom_summary:
         base.symptom_summary = merge_symptom_summary(base.symptom_summary, incoming.symptom_summary)
     if incoming.description:
@@ -462,6 +477,12 @@ def extract_conversation_state(messages: List[ChatMessage]) -> Extracted:
             continue
         turn_extracted = simple_extract(message.content)
         turn_extracted = apply_turn_context(messages[: index + 1], turn_extracted)
+        # Detect AED-found phrasing across all user turns so the state is preserved
+        if not merged.aed_confirmed:
+            compact = message.content.replace(" ", "")
+            aed_found_terms = ["找到AED", "拿到AED", "AED到了", "有AED", "AED在旁邊"]
+            if any(t in compact for t in aed_found_terms):
+                turn_extracted.aed_confirmed = True
         merged = merge_extracted(merged, turn_extracted)
 
     return merged

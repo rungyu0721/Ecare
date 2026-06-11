@@ -90,8 +90,18 @@ def init_db():
         """)
         cur.execute("""
             ALTER TABLE case_records
-                ADD COLUMN IF NOT EXISTS latitude  DOUBLE PRECISION,
-                ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+                ADD COLUMN IF NOT EXISTS latitude   DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS longitude  DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS updated_at VARCHAR(50);
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS incident_status_log (
+                id          SERIAL PRIMARY KEY,
+                report_id   VARCHAR(20) NOT NULL,
+                status      VARCHAR(100) NOT NULL,
+                note        TEXT,
+                created_at  VARCHAR(50)
+            );
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ecare_user (

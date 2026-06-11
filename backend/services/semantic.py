@@ -65,6 +65,7 @@ def heuristic_semantic_understanding(
     text: str,
     audio_context: Optional[Dict[str, Any]],
     fallback_entities: SemanticEntities,
+    extracted: Optional[Extracted] = None,
 ) -> SemanticUnderstanding:
     from backend.services.risk import INCIDENT_DESCRIPTION_KEYWORDS, has_disturbance_signal
     normalized_text = (text or "").strip()
@@ -84,7 +85,13 @@ def heuristic_semantic_understanding(
         "沒呼吸", "沒有呼吸", "呼吸困難", "喘不過氣", "吸不到氣", "很喘",
         "胸痛", "胸悶", "心臟痛", "抽搐", "半邊無力", "嘴歪", "講話不清楚", "失去意識", "意識不清",
     ]
-    emotional_support_keywords = ["好怕", "很怕", "不知道怎麼辦", "我快受不了", "我很崩潰"]
+    emotional_support_keywords = [
+        "好怕", "很怕", "不知道怎麼辦", "我快受不了", "我很崩潰",
+        "心疼", "好難受", "我很擔心", "嚇到了", "嚇壞了",
+        "怎麼會這樣", "我不知道該怎麼辦", "我手抖", "我腦袋空白",
+        "好無助", "我好慌", "不知所措", "我好害怕", "我嚇到了",
+        "我很害怕", "我好緊張", "我不知道怎麼辦才好", "好緊張",
+    ]
     question_keywords = ["怎麼辦", "要怎麼做", "是不是", "可不可以", "需要嗎"]
     disturbance_keywords = list(AGGRESSIVE_DISTURBANCE_KEYWORDS)
 
@@ -92,6 +99,15 @@ def heuristic_semantic_understanding(
         intent = "詢問"
         primary_need = "開始描述狀況"
         reply_strategy = "先友善接住，再請對方直接描述發生的事"
+    elif any(keyword in normalized_text for keyword in [
+        "AED", "aed", "找到AED", "找到aed", "拿到AED", "拿到aed",
+        "已打119", "已撥119", "打了119", "撥了119", "119來了",
+        "救護車來了", "救護車到了", "救援到了", "消防來了",
+        "開始CPR", "在做CPR", "已經在做", "已開始按壓",
+    ]):
+        intent = "進展回報"
+        primary_need = "確認下一步行動"
+        reply_strategy = "先肯定對方做得好，直接給下一個最關鍵的指示，不重述之前說過的步驟"
     elif has_aggressive_disturbance_signal(normalized_text) or any(
         keyword in normalized_text for keyword in disturbance_keywords
     ):
@@ -123,6 +139,25 @@ def heuristic_semantic_understanding(
         intent = "資訊補充"
         primary_need = "釐清狀況"
         reply_strategy = "先確認事件重點"
+
+    # 依 reporter_role 調整 reply_strategy
+    reporter_role = (extracted.reporter_role or "") if extracted else ""
+    if "照顧者" in reporter_role or "家屬" in reporter_role:
+        if intent in ["求救", "進展回報"]:
+            reply_strategy = (
+                "先給照顧者情感支持與肯定，用「你的家人」稱呼傷病者，"
+                "確認傷病者意識/呼吸，語氣要同時照顧照顧者與傷病者"
+            )
+        elif intent == "情緒支持":
+            reply_strategy = "先接住照顧者的擔心與心疼，再陪他一步一步整理目前狀況"
+    elif "本人受害" in reporter_role or reporter_role == "本人":
+        if intent == "求救":
+            reply_strategy = "先確認本人目前是否安全、有沒有受傷，再問事件細節，不要用旁觀者語氣"
+        elif intent == "情緒支持":
+            reply_strategy = "先直接承接本人的恐懼或痛苦，告訴他我在、不要一個人扛，再確認安全"
+    elif "旁觀者" in reporter_role:
+        if intent == "求救":
+            reply_strategy = "語氣鎮定，先給明確行動指引（不要靠近、撥 119），再問能安全觀察到的資訊"
 
     return SemanticUnderstanding(
         intent=intent,
@@ -234,7 +269,8 @@ def semantic_understanding_from_text(
 
 規則：
 - 只能輸出 JSON
-- intent 只能是：求救、通報、詢問、情緒支持、資訊補充、未知
+- intent 只能是：求救、通報、詢問、情緒支持、資訊補充、進展回報、未知
+- 「進展回報」用於使用者回報新進展，例如找到AED、已打119、開始CPR、救護車到了
 - primary_need 要簡短描述此刻最需要的協助
 - emotion 可綜合文字語氣與語音情緒
 - reply_strategy 要描述助理最適合的回應策略
@@ -242,6 +278,9 @@ def semantic_understanding_from_text(
 - 如果文字是在描述他人出事，primary_need 與 reply_strategy 也要反映「協助通報/確認現場」而不是只安撫本人
 - 不要把「我旁邊、這裡、附近、現場」當成明確位置
 - 如果最新一句是「有」「沒有」「是」「對」等短回覆，請結合近期對話判斷它在回答什麼、意思是什麼
+- reporter_role 為「照顧者/家屬」時：reply_strategy 要同時照顧照顧者情緒與傷病者狀態，稱呼傷病者為「你的家人」
+- reporter_role 為「本人」或「本人受害」時：reply_strategy 優先確認本人安全，不要用旁觀者語氣
+- reporter_role 為「旁觀者」時：reply_strategy 先給行動指引再問細節，強調不要靠近
 
 輸出格式：
 {{

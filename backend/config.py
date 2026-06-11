@@ -132,3 +132,10 @@ FOLLOWUP_CONTEXT_TURNS = env_int("FOLLOWUP_CONTEXT_TURNS", 4, minimum=2, maximum
 ENABLE_LLM_GRAPH_PLANNER = env_flag("ENABLE_LLM_GRAPH_PLANNER", default=False)
 ENABLE_LLM_SEMANTIC_UNDERSTANDING = env_flag("ENABLE_LLM_SEMANTIC_UNDERSTANDING", default=False)
 WARMUP_LLM_ON_STARTUP = env_flag("WARMUP_LLM_ON_STARTUP", default=True)
+
+# ======================
+# Local TTS settings
+# ======================
+
+TTS_BASE_URL = env_text("TTS_BASE_URL", default="http://127.0.0.1:8011")
+TTS_TIMEOUT_SECONDS = env_int("TTS_TIMEOUT_SECONDS", 45, minimum=5, maximum=120)

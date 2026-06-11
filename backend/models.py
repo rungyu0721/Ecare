@@ -30,6 +30,7 @@ class ChatRequest(BaseModel):
     audio_context: Optional[Dict[str, Any]] = None
     session_id: Optional[str] = None
     user_context: Optional[ChatUserContext] = None
+    report_created: bool = False  # 前端通報建立後傳 true，避免 LLM 再叫使用者撥 119
 
 
 class Extracted(BaseModel):
@@ -42,6 +43,7 @@ class Extracted(BaseModel):
     conscious: Optional[bool] = None
     breathing_difficulty: Optional[bool] = None
     fever: Optional[bool] = None
+    aed_confirmed: Optional[bool] = None
     symptom_summary: Optional[str] = None
     dispatch_advice: Optional[str] = None
     description: Optional[str] = None
@@ -99,6 +101,13 @@ class ChatResponse(BaseModel):
     voice_priority: Optional[str] = None   # "low" / "medium" / "high"
     should_speak: bool = False
     report_status_hint: Optional[str] = None  # "none" / "monitoring" / "high_risk_detected" / "report_recommended" / "report_created" / "waiting_for_update"
+    tts_key: Optional[str] = None  # pre-synthesis cache key; Flutter uses GET /tts/ready/{key}
+
+
+class TtsRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=300)
+    mode: Literal["zero-shot", "instruct2"] = "zero-shot"
+    speed: Optional[float] = Field(default=None, ge=0.5, le=1.5)
 
 
 # ======================
@@ -128,6 +137,19 @@ class ReportItem(BaseModel):
     risk_level: str
     risk_score: float
     description: str
+
+
+class ReportStatusUpdate(BaseModel):
+    status: str = Field(..., min_length=1, max_length=100)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class ReportStatusLogItem(BaseModel):
+    id: int
+    report_id: str
+    status: str
+    note: Optional[str] = None
+    created_at: str
 
 
 # ======================

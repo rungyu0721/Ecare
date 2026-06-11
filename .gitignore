@@ -1,5 +1,6 @@
 # Python environments and caches
 .venv/
+.venv-tts/
 __pycache__/
 *.pyc
 *.pyc.*
@@ -13,12 +14,16 @@ start_backend.ps1
 .idea/
 .vscode/
 .claude/
+CLAUDE.md
 local.properties
 
 # Runtime and generated data
 datasets/
 external/
+scripts/data/tts_prompt_*.mp3
 *.wav
+test_results.txt
+test_semantics.txt
 training.log
 nohup.out
 

@@ -11,7 +11,7 @@ http://<your-fastapi-host>:8000
 範例：
 
 ```text
-http://192.168.50.254:8000
+http://192.168.x.x:8000
 ```
 
 ## 2. 認證方式
@@ -32,6 +32,7 @@ http://192.168.50.254:8000
 
 - `POST /chat`
 - `POST /audio`
+- `POST /tts`
 - `GET /reports`
 - `POST /reports`
 
@@ -101,6 +102,7 @@ http://192.168.50.254:8000
   "voice_prompt": "系統已列為高風險通報。請保持手機可接通，確認患者是否有正常呼吸。",
   "voice_priority": "high",
   "should_speak": true,
+  "tts_key": "8b5d0f9b3d1f4c2a9e10",
   "report_status_hint": "report_recommended",
   "extracted": {
     "category": "醫療急症",
@@ -136,6 +138,7 @@ http://192.168.50.254:8000
 - `voice_prompt`: 適合語音播報的短句，通常比 `reply` 更短、更行動導向
 - `voice_priority`: 語音提示優先度，可能值為 `low`、`medium`、`high`
 - `should_speak`: 前端是否建議播報 `voice_prompt`
+- `tts_key`: 後端預先合成語音的快取 key；前端可先呼叫 `GET /tts/ready/{tts_key}` 取得 wav，失敗時再 fallback 到 `POST /tts`
 - `report_status_hint`: 通報狀態提示，供前端顯示 UI 狀態
 - `extracted`: 事件抽取結果
 - `semantic`: 文字語意理解結果
@@ -169,7 +172,93 @@ http://192.168.50.254:8000
 
 ---
 
-## 5. `POST /audio`
+## 5. `POST /tts`
+
+用途：
+
+- 將 `voice_prompt` 轉成 wav 語音。
+- 前端只呼叫 E-CARE FastAPI，不直接碰本地 CosyVoice2 service。
+- 後端會代理到 `TTS_BASE_URL`，預設是 `http://127.0.0.1:8011`。
+
+啟動需求：
+
+```powershell
+.\start_tts.ps1
+.\start_backend.ps1
+```
+
+### Request Body
+
+```json
+{
+  "text": "系統已列為高風險通報，請確認患者是否有正常呼吸。",
+  "mode": "zero-shot",
+  "speed": 1.0
+}
+```
+
+欄位：
+
+- `text`: 必填，1 到 300 字，建議使用 `ChatResponse.voice_prompt`
+- `mode`: 可選，`zero-shot` 或 `instruct2`，預設 `zero-shot`
+- `speed`: 可選，0.5 到 1.5，預設由 TTS service 決定
+
+### Response
+
+成功時回傳 `audio/wav`。
+
+```text
+Content-Type: audio/wav
+```
+
+常見錯誤：
+
+- `503`: 本地 TTS service 沒啟動，或 `TTS_BASE_URL` 連不到
+- `502`: 本地 TTS service 有回應，但合成失敗或沒有產生音訊
+
+PowerShell 測試：
+
+```powershell
+$body = [System.Text.Encoding]::UTF8.GetBytes('{"text":"系統已列為高風險通報，請確認患者是否有正常呼吸。"}')
+Invoke-WebRequest `
+  -Uri http://127.0.0.1:8000/tts `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body $body `
+  -OutFile scripts\output\fastapi_tts_test.wav
+```
+
+---
+
+## 6. `GET /tts/ready/{key}`
+
+用途：
+
+- 取得 `/chat` 回傳 `tts_key` 對應的預先合成語音。
+- 主要給 Flutter 在收到聊天回覆後立即播放，降低等待語音合成的體感延遲。
+- 如果 key 過期、尚未建立或合成失敗，前端應 fallback 到 `POST /tts`。
+
+### Response
+
+成功時回傳 `audio/wav`。
+
+常見錯誤：
+
+- `404`: 找不到此 `tts_key`，通常代表沒有預合成或快取已被清掉
+- `504`: 等待預合成逾時
+- `502`: 預合成任務失敗
+
+PowerShell 測試：
+
+```powershell
+Invoke-WebRequest `
+  -Uri http://127.0.0.1:8000/tts/ready/<tts_key> `
+  -OutFile scripts\output\fastapi_tts_ready_test.wav
+```
+
+---
+
+## 7. `POST /audio`
 
 用途：
 
@@ -221,7 +310,7 @@ multipart/form-data
 
 ---
 
-## 6. `GET /reports`
+## 8. `GET /reports`
 
 用途：
 
@@ -247,7 +336,7 @@ multipart/form-data
 
 ---
 
-## 7. `POST /reports`
+## 9. `POST /reports`
 
 用途：
 
@@ -284,7 +373,7 @@ multipart/form-data
 
 ---
 
-## 8. 建議資料庫欄位
+## 10. 建議資料庫欄位
 
 如果組員要把 FastAPI 結果存進資料庫，建議至少準備兩類資料表。
 
@@ -328,7 +417,7 @@ multipart/form-data
 
 ---
 
-## 9. 型別建議
+## 11. 型別建議
 
 - `risk_score`: `FLOAT`
 - `emotion_score`: `FLOAT`
@@ -342,7 +431,7 @@ multipart/form-data
 
 ---
 
-## 10. 錯誤處理
+## 12. 錯誤處理
 
 常見狀況：
 
@@ -358,7 +447,7 @@ multipart/form-data
 
 ---
 
-## 11. 串接注意事項
+## 13. 串接注意事項
 
 - `POST /chat` 的 `audio_context` 是可選欄位
 - `POST /audio` 上傳時必須用 `multipart/form-data`
@@ -368,7 +457,7 @@ multipart/form-data
 
 ---
 
-## 12. 建議你給組員的最小資訊包
+## 14. 建議你給組員的最小資訊包
 
 你可以直接把下面這些丟給組員：
 

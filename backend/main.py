@@ -17,6 +17,7 @@ from backend.api.routes.audio import build_audio_analysis_result  # noqa: F401
 from backend.api.routes.audio import router as audio_router
 from backend.api.routes.chat import router as chat_router
 from backend.api.routes.reports import router as reports_router
+from backend.api.routes.tts import router as tts_router
 from backend.config import (  # noqa: F401
     CHAT_CONTEXT_TURNS,
     COMPACT_LOCAL_LLM_MAX_TOKENS,
@@ -161,8 +162,6 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://10.0.2.2",
     "http://10.0.2.2:8000",
-    "http://192.168.50.223",
-    "http://192.168.50.223:5500",
     "capacitor://localhost",
     "ionic://localhost",
 ]
@@ -178,6 +177,7 @@ app.add_middleware(
 app.include_router(chat_router)
 app.include_router(audio_router)
 app.include_router(reports_router)
+app.include_router(tts_router)
 
 
 # ======================

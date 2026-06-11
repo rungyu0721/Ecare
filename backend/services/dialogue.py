@@ -142,16 +142,33 @@ def has_known_location_context(
     ex: Optional[Extracted],
     semantic: Optional[SemanticUnderstanding] = None,
     audio_context: Optional[Dict[str, Any]] = None,
+    messages: Optional[List[ChatMessage]] = None,
 ) -> bool:
+    # 1. extracted 已有明確位置
     if ex and ex.location and normalize_location_candidate(ex.location):
         return True
+    # 2. 語意理解已識別位置
     if (
         semantic
         and semantic.entities.location
         and normalize_location_candidate(semantic.entities.location)
     ):
         return True
-    return bool(get_client_location_text(audio_context))
+    # 3. 本輪 GPS 定位有值
+    if get_client_location_text(audio_context):
+        return True
+    # 4. 對話歷史中使用者曾提到具體地址詞彙
+    if messages:
+        all_user_text = " ".join(m.content for m in messages if m.role == "user")
+        if re.search(r'[路街道巷弄號樓縣市區鄉鎮村里站場]', all_user_text):
+            return True
+        # 常見地標關鍵字
+        if any(kw in all_user_text for kw in [
+            "捷運", "車站", "醫院", "學校", "公園", "廣場", "便利商店",
+            "加油站", "超市", "賣場", "大樓", "社區", "住宅",
+        ]):
+            return True
+    return False
 
 
 # ======================
@@ -253,7 +270,7 @@ def build_dialogue_state(
     audio_context: Optional[Dict[str, Any]] = None,
 ) -> DialogueState:
     latest_user_text_value, previous_assistant_text = get_last_turn_context(messages)
-    location_known = has_known_location_context(ex, semantic, audio_context)
+    location_known = has_known_location_context(ex, semantic, audio_context, messages=messages)
     location_text = (
         (normalize_location_candidate(ex.location) if ex.location else None)
         or (
@@ -387,6 +404,10 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
             return "對方現在還在現場，或還在持續威脅嗎？"
         if ex.people_injured is None:
             return "現場有人受傷、流血，或需要立刻送醫嗎？"
+        if ex.danger_active is False:
+            return "對方離開了嗎？你們現在在安全的位置嗎？"
+        if ex.danger_active is True and ex.weapon is True:
+            return "你們現在能離開現場嗎？請先移到安全位置，不要跟對方正面接觸。"
         return "目前你們有沒有先移動到比較安全的位置？"
 
     if ex.category == "交通事故":
@@ -427,9 +448,10 @@ def next_question_from_semantic(
     ex: Extracted,
     risk_level: str,
     audio_context: Optional[Dict[str, Any]] = None,
+    messages: Optional[List[ChatMessage]] = None,
 ) -> str:
     from backend.services.semantic import has_high_urgency_audio_emotion
-    location_known = has_known_location_context(ex, semantic, audio_context)
+    location_known = has_known_location_context(ex, semantic, audio_context, messages=messages)
 
     if has_high_urgency_audio_emotion(audio_context):
         if not location_known:
@@ -443,6 +465,13 @@ def next_question_from_semantic(
         return "你現在人在哪裡？請告訴我地址、明顯地標，或附近路名。"
 
     if ex.category == "醫療急症":
+        # Preserve specific AED/CPR operation instructions from first_aid_guides —
+        # don't replace them with a generic slot question.
+        if default_question and any(
+            t in default_question
+            for t in ["AED 電源", "貼上電極片", "照機器語音", "電擊後", "CPR", "胸外按壓", "按壓"]
+        ):
+            return default_question
         return next_question(ex, risk_level)
 
     if ex.category in ["噪音", "可疑人士", "暴力事件", "火災", "交通事故"]:

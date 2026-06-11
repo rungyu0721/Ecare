@@ -77,6 +77,7 @@ class ApiService {
     Map<String, dynamic>? audioContext,
     String? sessionId,
     Map<String, dynamic>? userContext,
+    bool reportCreated = false,
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/chat',
@@ -85,6 +86,7 @@ class ApiService {
         'audio_context': audioContext,
         'session_id': sessionId,
         'user_context': userContext,
+        'report_created': reportCreated,
       },
     );
 
@@ -135,6 +137,20 @@ class ApiService {
     }
 
     return ReportItem.fromJson(data);
+  }
+
+  Future<void> updateReportStatus(
+    String reportId,
+    String status, {
+    String? note,
+  }) async {
+    await _dio.post<void>(
+      '/reports/$reportId/status',
+      data: <String, dynamic>{
+        'status': status,
+        if (note != null) 'note': note,
+      },
+    );
   }
 
   Future<AudioAnalysis> uploadAudio({

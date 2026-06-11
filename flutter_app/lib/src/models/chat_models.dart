@@ -111,6 +111,7 @@ class ChatResponse {
     this.voicePriority,
     this.shouldSpeak = false,
     this.reportStatusHint,
+    this.ttsCacheKey,
   });
 
   final String reply;
@@ -124,6 +125,8 @@ class ChatResponse {
   final String? voicePriority;
   final bool shouldSpeak;
   final String? reportStatusHint;
+  /// Pre-synthesis cache key: use GET /tts/ready/{ttsCacheKey} for lower latency.
+  final String? ttsCacheKey;
 
   factory ChatResponse.fromJson(Map<String, dynamic> json) {
     return ChatResponse(
@@ -142,6 +145,7 @@ class ChatResponse {
       voicePriority: json['voice_priority'] as String?,
       shouldSpeak: json['should_speak'] as bool? ?? false,
       reportStatusHint: json['report_status_hint'] as String?,
+      ttsCacheKey: json['tts_key'] as String?,
     );
   }
 }

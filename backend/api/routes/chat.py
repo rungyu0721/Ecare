@@ -2,8 +2,11 @@
 /chat 路由：接收請求 → 呼叫服務管線 → 回傳回應。
 """
 
+import asyncio
+
 from fastapi import APIRouter, BackgroundTasks
 
+from backend.api.routes.tts import make_tts_key, schedule_prefetch
 from backend.db.neo4j_db import sync_chat_state_to_neo4j
 from backend.models import ChatRequest, ChatResponse, latest_user_text
 from backend.services.chat import process_chat_request
@@ -12,10 +15,17 @@ router = APIRouter()
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest, background_tasks: BackgroundTasks):
-    response = process_chat_request(
-        req.messages, req.audio_context, req.session_id, req.user_context
+async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
+    # Run blocking LLM pipeline in a thread so the event loop stays free.
+    response: ChatResponse = await asyncio.to_thread(
+        process_chat_request,
+        req.messages,
+        req.audio_context,
+        req.session_id,
+        req.user_context,
+        req.report_created,   # ← 新增
     )
+
     background_tasks.add_task(
         sync_chat_state_to_neo4j,
         req.session_id,
@@ -24,4 +34,10 @@ def chat(req: ChatRequest, background_tasks: BackgroundTasks):
         response.semantic,
         latest_user_text(req.messages),
     )
+
+    if response.voice_prompt:
+        key = make_tts_key(response.voice_prompt)
+        schedule_prefetch(response.voice_prompt, key)
+        response = response.model_copy(update={"tts_key": key})
+
     return response

@@ -56,6 +56,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSending = false;
   bool _isSendingAudioTurn = false;
   bool _reportCreated = false;
+  String? _activeReportId;
   bool _isRecording = false;
   bool _isProcessingAudio = false;
   StreamSubscription<AudioPlaybackSnapshot>? _audioPlaybackSubscription;
@@ -236,6 +237,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (profile.phone.trim().isNotEmpty)
                   'phone': profile.phone.trim(),
               },
+        reportCreated: _reportCreated,
       );
       if (!mounted) {
         return false;
@@ -255,7 +257,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _scrollToBottom();
       if (response.shouldSpeak) {
-        unawaited(_speakVoicePrompt(response.voicePrompt, isAutomatic: true));
+        unawaited(_speakVoicePrompt(
+          response.voicePrompt,
+          isAutomatic: true,
+          cacheKey: response.ttsCacheKey,
+        ));
       }
 
       if (response.shouldEscalate && !_reportCreated) {
@@ -667,9 +673,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _speakVoicePrompt(
     String? prompt, {
     bool isAutomatic = false,
+    String? cacheKey,
   }) async {
     final text = prompt?.trim() ?? '';
-    if (text.isEmpty) {
+    if (text.isEmpty && cacheKey == null) {
       if (!isAutomatic) {
         _showSnackBar('目前沒有可播報的語音提示');
       }
@@ -678,7 +685,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       await _audioPlaybackService.stop();
-      await _voicePromptService.speak(text);
+      if (cacheKey != null) {
+        await _voicePromptService.speakFromKey(cacheKey, fallbackText: text);
+      } else {
+        await _voicePromptService.speak(text);
+      }
     } catch (_) {
       if (!isAutomatic) {
         _showSnackBar('目前無法播報語音提示，請先看畫面文字。');
@@ -1111,8 +1122,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       setState(() {
         _reportCreated = true;
+        _activeReportId = report.id;
       });
-      _showSnackBar('\u5df2\u5efa\u7acb\u901a\u5831\uff1a${report.id}');
+      _showSnackBar('\u901a\u5831\u5df2\u5efa\u7acb\uff1a${report.id}');
     } catch (error) {
       _showSnackBar(
         ApiService.describeError(
@@ -1121,6 +1133,17 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _updateReportStatus(String status) async {
+    final reportId = _activeReportId;
+    if (reportId == null) return;
+    try {
+      await _apiService.updateReportStatus(reportId, status);
+    } catch (_) {
+      // Status log failure is non-critical; the user message still goes through.
+    }
+    unawaited(_sendQuickReply(status));
   }
 
   String _preferredLocationText(String? extractedLocation) {
@@ -1157,76 +1180,212 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (BuildContext context) {
         final locationText =
             _preferredLocationText(response.extracted.location);
+        final category = response.extracted.category ?? '\u5f85\u78ba\u8a8d';
+        final riskLevel = response.riskLevel;
+        final advice = response.extracted.dispatchAdvice?.trim() ?? '';
+        final prompt = response.voicePrompt?.trim() ?? '';
+
+        const red = Color(0xFF8F2E22);
+        const redLight = Color(0xFFFFEEEB);
+
         return Dialog(
           backgroundColor: Colors.transparent,
           child: Container(
-            width: 420,
-            padding: const EdgeInsets.all(18),
+            width: 440,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: const <BoxShadow>[
+                BoxShadow(
+                  color: Color.fromRGBO(0, 0, 0, 0.18),
+                  blurRadius: 24,
+                  offset: Offset(0, 8),
+                ),
+              ],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const Text(
-                  '\u9ad8\u98a8\u96aa\u63d0\u9192',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                    color: EcareApp.text,
+                // Header bar
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 18, vertical: 14),
+                  decoration: const BoxDecoration(
+                    color: red,
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                  ),
+                  child: const Row(
+                    children: <Widget>[
+                      Icon(Icons.crisis_alert_rounded,
+                          color: Colors.white, size: 22),
+                      SizedBox(width: 8),
+                      Text(
+                        'E-CARE \u9ad8\u98a8\u96aa\u901a\u5831',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  [
-                    '\u7cfb\u7d71\u5224\u65b7\u76ee\u524d\u60c5\u6cc1\u9700\u8981\u512a\u5148\u8655\u7406\u3002',
-                    '\u4f4d\u7f6e\uff1a$locationText',
-                    response.extracted.dispatchAdvice ??
-                        '\u5efa\u8b70\u76e1\u5feb\u806f\u7e6b\u5bb6\u4eba\u3001\u5b78\u6821\u6216\u64a5\u6253\u7dca\u6025\u96fb\u8a71\u3002',
-                  ].join('\n'),
-                  style: const TextStyle(color: EcareApp.text, height: 1.6),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  '\u5982\u679c\u60c5\u6cc1\u6301\u7e8c\u60e1\u5316\uff0c\u8acb\u7acb\u5373\u64a5\u6253 110 \u6216 119\u3002',
-                  style: TextStyle(color: EcareApp.muted),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () async {
-                          Navigator.of(context).pop();
-                          await _createReportFromLatest();
-                        },
-                        style: FilledButton.styleFrom(
-                          backgroundColor: EcareApp.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      // Category + risk chips
+                      Row(
+                        children: <Widget>[
+                          _DialogChip(label: '\u4e8b\u4ef6', value: category),
+                          const SizedBox(width: 8),
+                          _DialogChip(
+                            label: '\u98a8\u96aa',
+                            value: switch (riskLevel) {
+                              'High' => '\u9ad8\u5371',
+                              'Medium' => '\u4e2d\u7b49',
+                              _ => '\u4f4e',
+                            },
+                            accent: riskLevel == 'High',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      // Location
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          const Icon(Icons.location_on_outlined,
+                              size: 15, color: EcareApp.muted),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              locationText,
+                              style: const TextStyle(
+                                  color: EcareApp.text,
+                                  fontSize: 13,
+                                  height: 1.4),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (advice.isNotEmpty) ...<Widget>[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 11, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: redLight,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                                color: red.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              const Icon(Icons.directions_run_rounded,
+                                  size: 14, color: red),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  advice,
+                                  style: const TextStyle(
+                                    color: red,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.45,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        child: const Text('\u5efa\u7acb\u901a\u5831'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        style: TextButton.styleFrom(
-                          backgroundColor: const Color(0xFFF2F2F2),
-                          foregroundColor: EcareApp.text,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                      ],
+                      if (prompt.isNotEmpty) ...<Widget>[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 11, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF7EA),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                                color: const Color(0xFFE5D3B5)),
+                          ),
+                          child: Row(
+                            children: <Widget>[
+                              const Icon(Icons.record_voice_over_outlined,
+                                  size: 14, color: EcareApp.muted),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  prompt,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: EcareApp.text,
+                                    fontSize: 12,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        child: const Text('\u7a0d\u5f8c\u518d\u8aaa'),
+                      ],
+                      const SizedBox(height: 10),
+                      const Text(
+                        '\u60c5\u6cc1\u6301\u7e8c\u60e1\u5316\u6642\uff0c\u8acb\u7acb\u5373\u64a5\u6253 110 \u6216 119\u3002',
+                        style: TextStyle(
+                            color: EcareApp.muted, fontSize: 12),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 14),
+                      // Action buttons
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: () async {
+                                Navigator.of(context).pop();
+                                await _createReportFromLatest();
+                              },
+                              icon: const Icon(Icons.add_task_outlined,
+                                  size: 16),
+                              label: const Text('\u5efa\u7acb\u901a\u5831'),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: red,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextButton(
+                              onPressed: () =>
+                                  Navigator.of(context).pop(),
+                              style: TextButton.styleFrom(
+                                backgroundColor: const Color(0xFFF2F2F2),
+                                foregroundColor: EcareApp.text,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: const Text('\u7a0d\u5f8c\u518d\u8aaa'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1341,6 +1500,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       isVoiceSpeaking: _voicePromptSnapshot.isSpeaking,
                       onToggleVoicePrompt: () =>
                           _toggleVoicePrompt(_latestResponse?.voicePrompt),
+                      reportCreated: _reportCreated,
+                      onStatusUpdate: _updateReportStatus,
                     ),
                   ),
                 Expanded(
@@ -1789,7 +1950,7 @@ class _QuickReplyAction {
   final String text;
 }
 
-class _IncidentSnapshotPanel extends StatelessWidget {
+class _IncidentSnapshotPanel extends StatefulWidget {
   const _IncidentSnapshotPanel({
     required this.riskLevel,
     required this.statusPills,
@@ -1798,6 +1959,8 @@ class _IncidentSnapshotPanel extends StatelessWidget {
     this.shouldSpeak = false,
     this.isVoiceSpeaking = false,
     this.onToggleVoicePrompt,
+    this.reportCreated = false,
+    this.onStatusUpdate,
   });
 
   final String riskLevel;
@@ -1807,17 +1970,26 @@ class _IncidentSnapshotPanel extends StatelessWidget {
   final bool shouldSpeak;
   final bool isVoiceSpeaking;
   final VoidCallback? onToggleVoicePrompt;
+  final bool reportCreated;
+  final ValueChanged<String>? onStatusUpdate;
+
+  @override
+  State<_IncidentSnapshotPanel> createState() => _IncidentSnapshotPanelState();
+}
+
+class _IncidentSnapshotPanelState extends State<_IncidentSnapshotPanel> {
+  bool _expanded = true;
 
   String get _title {
-    return switch (riskLevel) {
-      'High' => '\u512a\u5148\u8655\u7406\u4e2d',
-      'Medium' => '\u6301\u7e8c\u89c0\u5bdf\u4e2d',
-      _ => '\u4e8b\u4ef6\u6458\u8981',
+    return switch (widget.riskLevel) {
+      'High' => '優先處理中',
+      'Medium' => '持續觀察中',
+      _ => '事件摘要',
     };
   }
 
   Color get _accentColor {
-    return switch (riskLevel) {
+    return switch (widget.riskLevel) {
       'High' => const Color(0xFF8F2E22),
       'Medium' => const Color(0xFFC95A4A),
       _ => EcareApp.muted,
@@ -1826,10 +1998,14 @@ class _IncidentSnapshotPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final advice = dispatchAdvice?.trim() ?? '';
-    final prompt = voicePrompt?.trim() ?? '';
+    final advice = widget.dispatchAdvice?.trim() ?? '';
+    final prompt = widget.voicePrompt?.trim() ?? '';
 
-    return Container(
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInOut,
+      alignment: Alignment.topCenter,
+      child: Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1841,32 +2017,43 @@ class _IncidentSnapshotPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Row(
-            children: <Widget>[
-              Icon(Icons.checklist_rtl_rounded, color: _accentColor, size: 18),
-              const SizedBox(width: 6),
-              Text(
-                _title,
-                style: const TextStyle(
-                  color: EcareApp.text,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 14,
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Row(
+              children: <Widget>[
+                Icon(Icons.checklist_rtl_rounded, color: _accentColor, size: 18),
+                const SizedBox(width: 6),
+                Text(
+                  _title,
+                  style: const TextStyle(
+                    color: EcareApp.text,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              if (riskLevel == 'High')
-                const Icon(
-                  Icons.priority_high_rounded,
-                  color: Color(0xFF8F2E22),
+                const Spacer(),
+                if (widget.riskLevel == 'High' && _expanded)
+                  const Icon(
+                    Icons.priority_high_rounded,
+                    color: Color(0xFF8F2E22),
+                    size: 18,
+                  ),
+                const SizedBox(width: 4),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  color: _accentColor.withValues(alpha: 0.6),
                   size: 18,
                 ),
-            ],
+              ],
+            ),
           ),
+          if (_expanded) ...[
           const SizedBox(height: 9),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: statusPills
+            children: widget.statusPills
                 .map((item) => _IncidentStatusChip(item: item))
                 .toList(),
           ),
@@ -1914,12 +2101,12 @@ class _IncidentSnapshotPanel extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: shouldSpeak
+                color: widget.shouldSpeak
                     ? const Color(0xFFFFF0EA)
                     : const Color(0xFFFFF7EA),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: shouldSpeak
+                  color: widget.shouldSpeak
                       ? EcareApp.primary.withValues(alpha: 0.35)
                       : const Color(0xFFEBDCC3),
                 ),
@@ -1928,13 +2115,13 @@ class _IncidentSnapshotPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: <Widget>[
                   Icon(
-                    isVoiceSpeaking
+                    widget.isVoiceSpeaking
                         ? Icons.graphic_eq_rounded
-                        : shouldSpeak
+                        : widget.shouldSpeak
                             ? Icons.volume_up_rounded
                             : Icons.record_voice_over_outlined,
                     size: 15,
-                    color: shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
+                    color: widget.shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
                   ),
                   const SizedBox(width: 7),
                   Expanded(
@@ -1944,11 +2131,11 @@ class _IncidentSnapshotPanel extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color:
-                            shouldSpeak ? EcareApp.primaryDark : EcareApp.text,
+                            widget.shouldSpeak ? EcareApp.primaryDark : EcareApp.text,
                         fontSize: 12,
                         height: 1.45,
                         fontWeight:
-                            shouldSpeak ? FontWeight.w800 : FontWeight.w600,
+                            widget.shouldSpeak ? FontWeight.w800 : FontWeight.w600,
                       ),
                     ),
                   ),
@@ -1956,20 +2143,20 @@ class _IncidentSnapshotPanel extends StatelessWidget {
                   SizedBox.square(
                     dimension: 34,
                     child: IconButton(
-                      tooltip: isVoiceSpeaking ? '停止播報' : '重播語音提示',
-                      onPressed: onToggleVoicePrompt,
+                      tooltip: widget.isVoiceSpeaking ? '停止播報' : '重播語音提示',
+                      onPressed: widget.onToggleVoicePrompt,
                       padding: EdgeInsets.zero,
                       iconSize: 19,
                       style: IconButton.styleFrom(
                         backgroundColor: Colors.white.withValues(alpha: 0.82),
                         foregroundColor:
-                            shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
+                            widget.shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
                       icon: Icon(
-                        isVoiceSpeaking
+                        widget.isVoiceSpeaking
                             ? Icons.stop_rounded
                             : Icons.play_arrow_rounded,
                       ),
@@ -1979,9 +2166,62 @@ class _IncidentSnapshotPanel extends StatelessWidget {
               ),
             ),
           ],
+          if (widget.reportCreated && widget.onStatusUpdate != null) ...<Widget>[
+            const SizedBox(height: 10),
+            const Divider(height: 1, color: Color(0xFFEBDCC3)),
+            const SizedBox(height: 10),
+            Row(
+              children: <Widget>[
+                const Icon(Icons.assignment_turned_in_outlined,
+                    size: 13, color: EcareApp.muted),
+                const SizedBox(width: 5),
+                const Text(
+                  '通報已建立 · 更新狀態',
+                  style: TextStyle(
+                    color: EcareApp.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: <Widget>[
+                  _StatusUpdateChip(
+                    icon: Icons.local_police_outlined,
+                    label: '救援已抵達',
+                    onTap: () => widget.onStatusUpdate!('救援已抵達'),
+                  ),
+                  const SizedBox(width: 7),
+                  _StatusUpdateChip(
+                    icon: Icons.sentiment_satisfied_outlined,
+                    label: '情況緩和',
+                    onTap: () => widget.onStatusUpdate!('情況緩和'),
+                  ),
+                  const SizedBox(width: 7),
+                  _StatusUpdateChip(
+                    icon: Icons.shield_outlined,
+                    label: '我已安全',
+                    onTap: () => widget.onStatusUpdate!('我已安全'),
+                  ),
+                  const SizedBox(width: 7),
+                  _StatusUpdateChip(
+                    icon: Icons.directions_run_outlined,
+                    label: '撤離完成',
+                    onTap: () => widget.onStatusUpdate!('撤離完成'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          ], // if (_expanded)
         ],
       ),
-    );
+    ), // Container
+    ); // AnimatedSize
   }
 }
 
@@ -2336,6 +2576,98 @@ class _RecordingComposerStrip extends StatelessWidget {
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusUpdateChip extends StatelessWidget {
+  const _StatusUpdateChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0FFF4),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFB7DFC4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 13, color: const Color(0xFF2D7A47)),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF2D7A47),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DialogChip extends StatelessWidget {
+  const _DialogChip({
+    required this.label,
+    required this.value,
+    this.accent = false,
+  });
+
+  final String label;
+  final String value;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    const red = Color(0xFF8F2E22);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: accent ? const Color(0xFFFFEEEB) : const Color(0xFFFFF7EA),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: accent
+              ? red.withValues(alpha: 0.35)
+              : const Color(0xFFE5D3B5),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            '$label: ',
+            style: TextStyle(
+              color: accent ? red : EcareApp.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: accent ? red : EcareApp.text,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],

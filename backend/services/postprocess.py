@@ -34,6 +34,54 @@ from backend.services.semantic import (
     has_high_urgency_audio_emotion,
     has_known_location_context,
 )
+from backend.services.first_aid_guides import get_guide
+
+
+# 已說過就不再重複的固定句型
+_REPEATED_PHRASE_PATTERNS = [
+    "系統已列為高風險通報",
+    "請保持手機可接通",
+    "先確認你現在是否安全",
+    "先留意現場安全",
+    "先確認自己是否安全",
+]
+
+
+def _remove_repeated_phrases(text: str, assistant_history: List[str]) -> str:
+    """移除在最近幾輪 assistant 訊息中已出現過的固定句型片段。"""
+    if not text or not assistant_history:
+        return text
+    combined = "".join(assistant_history[-4:])
+    result = text
+    for phrase in _REPEATED_PHRASE_PATTERNS:
+        if phrase in combined and phrase in result:
+            # 嘗試移除整個含該片語的子句（以，或。分隔）
+            result = re.sub(
+                r"[^，。！？]*" + re.escape(phrase) + r"[^，。！？]*[，。！？]?",
+                "",
+                result,
+            )
+    return result.strip("，。！？ ")
+
+
+def _build_unresponsive_next_q(previous_assistant_text: str) -> str:
+    """根據前一輪已說的內容，決定意識喪失時的下一步引導，避免重複。"""
+    prev = previous_assistant_text or ""
+    already_aed = "AED" in prev
+    already_cpr = "CPR" in prev or "胸外按壓" in prev
+    already_breathing = "正常呼吸" in prev or "胸口起伏" in prev or "胸口是否有起伏" in prev
+
+    if already_aed and already_cpr:
+        return "AED 有找到了嗎？旁邊有人可以幫忙嗎？"
+    if already_cpr:
+        return "CPR 繼續做，每次按壓讓胸口下壓約 5 公分，速度大約每秒兩下。AED 有找到嗎？"
+    if already_breathing:
+        return "請依救援指示開始 CPR，並請旁邊的人找 AED。"
+    return (
+        "系統已列為高風險通報，請保持手機可接通。"
+        "請確認胸口是否有起伏、有沒有正常呼吸；"
+        "如果沒有正常呼吸，請依救援指示開始 CPR，並請旁邊的人找 AED。"
+    )
 
 
 QUESTION_INTENT_KEYWORDS = {
@@ -61,7 +109,10 @@ NO_NORMAL_BREATHING_TERMS = [
     "胸口沒有起伏", "胸口沒起伏", "只有喘一下", "像打鼾", "瀕死式呼吸",
 ]
 CALLED_119_TERMS = ["已經撥119", "已撥119", "打119了", "撥了119", "正在跟119", "119接了"]
-AED_ARRIVED_TERMS = ["AED到了", "aed到了", "拿到AED", "拿到aed", "有AED", "有aed", "AED在旁邊", "aed在旁邊"]
+AED_ARRIVED_TERMS = [
+    "AED到了", "aed到了", "拿到AED", "拿到aed", "找到AED", "找到aed",
+    "有AED", "有aed", "AED在旁邊", "aed在旁邊",
+]
 CHOKING_TERMS = ["噎到", "哽塞", "噎住", "卡住喉嚨", "異物卡住", "說不出話", "臉發紫"]
 BLEEDING_TERMS = ["大量流血", "血流不止", "血流不停", "流血不止", "止不住血", "噴血", "割傷", "刀割傷"]
 FOREIGN_OBJECT_TERMS = ["玻璃插", "玻璃碎片", "刀插", "異物插", "東西插著", "插在傷口"]
@@ -88,16 +139,11 @@ def has_aed_arrived(text: str) -> bool:
 
 
 def cpr_guidance_for_unresponsive(ex: Extracted, *, aed_ready: bool = False) -> tuple[str, str]:
-    subject = "你的家人" if ex.reporter_role == "照顧者/家屬" else "傷者"
     if aed_ready:
-        return (
-            "收到，AED 已經到現場。請保持手機可接通，並照 AED 語音或救援人員指示操作。",
-            "請打開 AED 電源，依語音貼上電極片；AED 分析或準備電擊時，確認所有人都離開傷者身體，電擊後立刻依 AED 或救援指示繼續按壓。",
-        )
-    return (
-        f"收到，{subject}呼吸可能不正常，沒有正常呼吸是非常危急的狀況。系統已列為高風險通報，請保持手機可接通。",
-        "請旁邊的人去找 AED。若救援人員指示開始 CPR，雙手放在胸口中央，用力且快速按壓，直到救護人員或 AED 接手。",
-    )
+        return get_guide("cpr_aed_ready")
+    subject = "你的家人" if ex.reporter_role == "照顧者/家屬" else "傷者"
+    reply, advice = get_guide("cpr_no_aed")
+    return reply.format(subject=subject), advice
 
 
 def has_any_term(text: str, terms: list[str]) -> bool:
@@ -112,14 +158,8 @@ def first_aid_guidance_for_text(text: str, ex: Extracted) -> Optional[tuple[str,
         ex.category = "醫療急症"
         ex.people_injured = True
         if "嬰兒" in text or "寶寶" in text or "未滿1歲" in text or "未滿一歲" in text:
-            return (
-                "收到，這像是嬰兒異物哽塞，系統已列為高風險通報。請保持手機可接通，先讓嬰兒頭低趴在你的手臂上。",
-                "用掌根拍打兩側肩胛骨中間 5 次，再翻成仰躺用兩根手指壓胸 5 次；重複到異物排出或救援人員接手。",
-            )
-        return (
-            "收到，這像是異物哽塞。若對方清醒但不能說話、不能有效咳嗽或臉色發紫，系統會列為高風險通報。",
-            "請站到對方身後，雙手環抱上腹部，握拳放在肚臍上方，用力向內向上推壓；若失去反應，讓他平躺並進入 CPR/AED 流程。",
-        )
+            return get_guide("choking_infant")
+        return get_guide("choking")
 
     if has_any_term(text, BLEEDING_TERMS) or (
         has_any_term(text, FOREIGN_OBJECT_TERMS) and ("流血" in text or "出血" in text)
@@ -127,61 +167,37 @@ def first_aid_guidance_for_text(text: str, ex: Extracted) -> Optional[tuple[str,
         ex.category = "醫療急症"
         ex.people_injured = True
         if has_any_term(text, FOREIGN_OBJECT_TERMS):
-            return (
-                "收到，傷口有異物時不要拔出。系統會優先整理成高風險通報，請保持手機可接通。",
-                "請用乾淨布料在異物兩側加壓固定，不要壓在異物正上方；如果布料滲血，不要拿掉，直接再加一層繼續壓。",
-            )
-        return (
-            "收到，有持續出血時先直接止血。系統會優先整理成高風險通報，請保持手機可接通。",
-            "請用乾淨布料直接壓住傷口 5 到 10 分鐘不要放開；如果布料滲血，不要拿掉，直接再加布繼續壓。",
-        )
+            return get_guide("bleeding_foreign_object")
+        return get_guide("bleeding")
 
     if has_any_term(text, SEIZURE_TERMS):
         ex.category = "醫療急症"
         ex.people_injured = True
-        return (
-            "收到，這像是抽搐或癲癇發作。請先移開旁邊硬物，保護頭部，不要壓住他的手腳，也不要把東西塞進嘴裡。",
-            "請幫他計時；如果抽搐超過 5 分鐘、連續發作、受傷，或抽搐後沒有恢復反應，系統會列為高風險通報並持續引導。",
-        )
+        return get_guide("seizure")
 
     if has_any_term(text, STROKE_TERMS):
         ex.category = "醫療急症"
         ex.people_injured = True
-        return (
-            "收到，這可能是中風徵象，時間很重要。系統已列為高風險通報，請保持手機可接通。",
-            "請記下症狀開始時間，確認臉有沒有歪、雙手能不能平舉、說話是否清楚；不要讓他吃東西、喝水或自行走動。",
-        )
+        return get_guide("stroke")
 
     if has_any_term(text, CHEST_PAIN_TERMS) and (
         has_any_term(text, CHEST_PAIN_HIGH_TERMS) or ex.breathing_difficulty is True
     ):
         ex.category = "醫療急症"
         ex.people_injured = True
-        return (
-            "收到，胸痛合併喘、冒冷汗或臉色差時要優先處理。系統已列為高風險通報，請保持手機可接通。",
-            "請讓他停止活動、坐下或半坐臥休息，不要自行走路或開車；如果有醫師開的耐絞寧，依原醫囑使用並回報是否緩解。",
-        )
+        return get_guide("chest_pain")
 
     if has_any_term(text, HEAT_ILLNESS_TERMS):
         ex.category = "醫療急症"
         ex.people_injured = True
-        return (
-            "收到，這可能是中暑或熱傷害。請先把人移到陰涼通風處，鬆開外套或緊的衣物。",
-            "請用濕毛巾、搧風或灑水協助降溫，並確認意識和呼吸；如果叫不醒、意識混亂或沒有正常呼吸，系統會列為高風險通報。",
-        )
+        return get_guide("heat_illness")
 
     if has_any_term(text, FRACTURE_TERMS):
         ex.category = "醫療急症"
         ex.people_injured = True
         if "車禍" in text or "被車撞" in text or "撞車" in text:
-            return (
-                "收到，車禍或疑似骨折時，除非現場有立即危險，先不要移動或扶起傷者，避免造成二次傷害。",
-                "請從安全位置陪同並觀察意識、呼吸和流血狀況；如果骨頭外露，不要推回去，用乾淨布輕輕覆蓋等待救援。",
-            )
-        return (
-            "收到，這可能是骨折。請先不要拉直、扭回或讓傷肢承重，保持原本比較舒服的位置。",
-            "如果骨頭外露，不要推回去，用乾淨布輕輕覆蓋；如果手腳末端發紫、冰冷或麻木，請立刻回報。",
-        )
+            return get_guide("fracture_traffic")
+        return get_guide("fracture")
 
     return None
 
@@ -289,7 +305,7 @@ def apply_short_answer_to_event_slot(
             next_q = "呼吸是否正常？有沒有喘不過氣、嘴唇發紫，或症狀快速加重？"
         else:
             reply = "收到，傷者目前沒有明確反應，這需要立即處理。"
-            next_q = "系統已列為高風險通報，請保持手機可接通。請確認胸口是否有起伏、有沒有正常呼吸；如果沒有正常呼吸，請依救援指示開始 CPR，並請旁邊的人找 AED。"
+            next_q = _build_unresponsive_next_q(previous_assistant_text)
         return reply, next_q
 
     if intent == "breathing" and ex.category == "醫療急症":
@@ -346,9 +362,17 @@ def apply_short_answer_to_event_slot(
         ex.danger_active = answered_yes
         if answered_yes:
             reply = "收到，危險目前還在持續。你先以自身安全為優先，不要勉強靠近或介入。"
+            if ex.category == "暴力事件" and ex.weapon is None:
+                next_q = "請先往安全方向離開現場，保持距離。現場有沒有持刀、棍棒或其他武器？"
+            else:
+                next_q = next_question(ex, risk_level)
         else:
-            reply = "了解，目前危險看起來沒有持續擴大。"
-        next_q = next_question(ex, risk_level)
+            # "沒有了" carries the nuance that danger has already gone; plain "沒有" just denies it
+            if latest_user_text.strip() in ["沒有了", "沒了", "不在了", "走了", "離開了"]:
+                reply = "了解，情況看起來已經緩和，對方應該已離開，不在附近了。"
+            else:
+                reply = "了解，目前危險看起來沒有持續擴大。"
+            next_q = next_question(ex, risk_level)
         return reply, next_q
 
     return None
@@ -381,7 +405,7 @@ def contextualize_reply_and_question(
 
     def is_no(text: str) -> bool:
         normalized = text.replace("！", "").replace("!", "").strip().lower()
-        return normalized in ["沒有", "沒", "不是", "不會", "不用", "沒有喔", "沒有啊", "沒有呢"]
+        return normalized in ["沒有", "沒", "不是", "不會", "不用", "沒有喔", "沒有啊", "沒有呢", "沒有了", "沒了", "不在了", "沒了呢"]
 
     def is_unknown(text: str) -> bool:
         normalized = text.replace("！", "").replace("!", "").strip().lower()
@@ -393,17 +417,52 @@ def contextualize_reply_and_question(
     reply_is_generic = is_generic_intake_text(reply)
     next_question_is_generic = is_generic_intake_text(next_q)
 
+    # Ambulance arrived — hand-off guidance supersedes everything else
+    AMBULANCE_ARRIVED_TERMS = ["救護車到了", "救護車來了", "救護車到達", "救護車抵達"]
+    if any(term in latest_user_text for term in AMBULANCE_ARRIVED_TERMS):
+        reply = "好，收到！救護車已到，繼續做直到他們接手。"
+        next_q = "請準備和救護人員交接，告訴救護人員目前狀況，以及有沒有使用 AED。"
+        return reply, next_q
+
+    if has_aed_arrived(latest_user_text) and (
+        ex.category == "醫療急症"
+        or any(term in previous_assistant_text for term in ["AED", "CPR", "無反應", "沒有反應", "正常呼吸", "胸口"])
+    ):
+        ex.category = "醫療急症"
+        ex.people_injured = True
+        ex.aed_confirmed = True
+        return cpr_guidance_for_unresponsive(ex, aed_ready=True)
+
     if ex.category == "醫療急症" and (ex.conscious is False or ex.breathing_difficulty is True):
         if has_aed_arrived(latest_user_text):
             ex.people_injured = True
+            ex.aed_confirmed = True
             return cpr_guidance_for_unresponsive(ex, aed_ready=True)
+        # CPR already in progress — acknowledge and guide
+        CPR_STARTED_TERMS = ["已經開始CPR", "已開始CPR", "正在做CPR", "在做CPR", "已經在做CPR"]
+        if any(term in latest_user_text for term in CPR_STARTED_TERMS):
+            ex.people_injured = True
+            ex.conscious = False
+            ex.breathing_difficulty = True
+            reply = "好，做得好！繼續保持按壓節奏。"
+            next_q = "AED 有找到了嗎？請保持按壓速度每秒兩下，深度約 5 公分，直到 AED 或救援人員到位。"
+            return reply, next_q
+        # User acknowledged CPR instructions ("好") — continue guidance
+        _CPR_INSTRUCTION_TERMS = ["胸口中央", "往下壓", "按壓", "胸外按壓"]
+        _simple_yes = latest_user_text.strip() in ["好", "好的", "好啊", "好喔", "嗯", "恩", "OK", "ok"]
+        if (is_yes(latest_user_text) or _simple_yes) and any(
+            term in previous_assistant_text for term in _CPR_INSTRUCTION_TERMS
+        ):
+            reply = "好，繼續做，保持節奏。旁邊有人去找 AED 了嗎？"
+            next_q = "AED 找到了嗎？按壓速度每秒兩下，深度約 5 公分，繼續直到 AED 或救援人員到位。"
+            return reply, next_q
         if has_no_normal_breathing(latest_user_text):
             ex.people_injured = True
             ex.breathing_difficulty = True
             return cpr_guidance_for_unresponsive(ex)
         if has_called_119(latest_user_text):
-            reply = "很好，通報已經進入救援流程。請保持通話或手機可接通。"
-            next_q = "現在請回報傷者是否有正常呼吸；如果沒有正常呼吸，請準備依救援指示開始 CPR，並請旁邊的人找 AED。"
+            reply = "收到，很好！119 已通報，救援流程已啟動，請保持通話或手機可接通。"
+            next_q = "請回報傷者目前意識和正常呼吸狀況；如果沒有正常呼吸，請依救援指示開始 CPR，並請旁邊的人找 AED。"
             return reply, next_q
 
     first_aid_result = first_aid_guidance_for_text(latest_user_text, ex)
@@ -526,7 +585,10 @@ def contextualize_reply_and_question(
         elif is_no(latest_user_text):
             ex.danger_active = False
             if reply_is_generic:
-                reply = "了解，目前危險看起來沒有持續擴大。"
+                if latest_user_text.strip() in ["沒有了", "沒了", "不在了", "走了", "離開了"]:
+                    reply = "了解，情況看起來已經緩和，對方應該已離開，不在附近了。"
+                else:
+                    reply = "了解，目前危險看起來沒有持續擴大。"
             if next_question_is_generic or asks_about_danger(next_q):
                 next_q = "請再補充一下現場的狀況，我會幫你整理後續通報內容。"
 
@@ -557,6 +619,21 @@ REPORT_STYLE_MARKERS = (
     "風險等級：",
     "建議派遣：",
 )
+
+
+def looks_like_generic_open_question(text: str) -> bool:
+    """判斷 reply 是否是空泛的開放式問句，無法對使用者提供具體引導。"""
+    generic_patterns = [
+        "目前的情況是什麼樣的",
+        "有沒有其他人需要幫助",
+        "可以告訴我更多",
+        "請告訴我目前",
+        "目前狀況如何",
+        "有什麼需要補充",
+        "還有什麼要說",
+    ]
+    normalized = (text or "").strip()
+    return any(p in normalized for p in generic_patterns)
 
 
 def looks_like_report_style_reply(text: str) -> bool:
@@ -640,6 +717,7 @@ def sanitize_reply_and_question(
     next_q: str,
     ex: Extracted,
     risk_level: str,
+    messages: Optional[List[ChatMessage]] = None,
 ) -> tuple:
     from backend.services.extraction import normalize_category_name
     reply = (reply or "").strip()
@@ -663,7 +741,10 @@ def sanitize_reply_and_question(
     for _ in range(4):
         changed = False
 
-        if ex.category == "醫療急症" and reply and asks_about_danger(reply):
+        _reply_is_action_guide = any(
+            t in reply for t in ["AED", "CPR", "胸外按壓", "電擊", "按壓", "電極片", "照機器語音", "急救"]
+        )
+        if ex.category == "醫療急症" and reply and asks_about_danger(reply) and not _reply_is_action_guide:
             reply = "收到，目前這比較像是醫療急症，我先幫你確認症狀變化。"
             changed = True
         elif ex.location and reply and asks_about_location(reply):
@@ -684,6 +765,22 @@ def sanitize_reply_and_question(
         elif ex.danger_active is not None and asks_about_danger(next_q):
             replacement = next_question(ex, risk_level)
 
+        # 暴力事件全部 slot 填完，但 reply 還是空泛開放式問句，替換成具體引導
+        if (
+            ex.category == "暴力事件"
+            and ex.weapon is not None
+            and ex.danger_active is not None
+            and ex.people_injured is not None
+            and looks_like_generic_open_question(reply)
+        ):
+            if ex.danger_active is False:
+                reply = "收到，情況已緩和。對方離開了嗎？你們現在在安全的位置嗎？"
+            elif ex.weapon is True:
+                reply = "收到，請先離開現場，移到安全的地方，不要跟對方正面接觸。"
+            else:
+                reply = "收到，請先確認你們都在安全的位置。"
+            changed = True
+
         if replacement and replacement != next_q:
             next_q = replacement
             changed = True
@@ -692,6 +789,12 @@ def sanitize_reply_and_question(
             break
 
     next_q = remove_duplicate_next_question(reply, next_q)
+
+    # 全局去重：移除在最近幾輪 assistant 訊息中已說過的固定句型
+    if messages:
+        assistant_history = [m.content for m in messages if m.role == "assistant"]
+        reply = _remove_repeated_phrases(reply, assistant_history)
+        next_q = _remove_repeated_phrases(next_q, assistant_history)
 
     return reply, next_q
 
@@ -705,6 +808,7 @@ def apply_semantic_tone(
     semantic: SemanticUnderstanding,
     risk_level: str,
     audio_context: Optional[Dict[str, Any]] = None,
+    previous_assistant_text: str = "",
 ) -> str:
     prefix = ""
     audio_emotion = get_audio_emotion(audio_context)
@@ -723,13 +827,20 @@ def apply_semantic_tone(
     elif semantic.intent == "情緒支持":
         prefix = "我在，你可以慢慢說，我會陪你一起整理。"
 
+    _is_action_mode = any(
+        t in reply for t in ["AED", "CPR", "胸外按壓", "電擊", "按壓", "貼上電極片", "照機器語音"]
+    )
     if has_high_urgency_audio_emotion(audio_context) and risk_level in ["Medium", "High"]:
-        if not location_known and "安全" not in reply and "位置" not in reply and "在哪" not in reply:
+        if _is_action_mode:
+            suffix = ""
+        elif not location_known and "安全" not in reply and "位置" not in reply and "在哪" not in reply:
             suffix = " 你先確認自己是否在安全位置，如果方便，請立刻告訴我目前位置。"
         else:
             suffix = ""
     elif risk_level == "High" and "安全" not in reply:
-        if semantic.primary_need and "通報" in semantic.primary_need:
+        if _is_action_mode:
+            suffix = ""
+        elif semantic.primary_need and "通報" in semantic.primary_need:
             suffix = (
                 " 先留意現場安全。"
                 if location_known
@@ -745,6 +856,12 @@ def apply_semantic_tone(
         suffix = f" 我會先以{semantic.primary_need}為主。"
     else:
         suffix = ""
+
+    # 若 suffix 的核心內容在前一輪已說過，就不重複
+    if suffix and previous_assistant_text:
+        suffix_core = suffix.strip(" 。，")
+        if any(phrase in previous_assistant_text for phrase in _REPEATED_PHRASE_PATTERNS if phrase in suffix_core):
+            suffix = ""
 
     return f"{prefix}{reply}{suffix}".strip()
 

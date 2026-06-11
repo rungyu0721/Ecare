@@ -700,6 +700,7 @@ def llm_chat_with_audio(
     audio_context: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
     user_context: Optional[ChatUserContext] = None,
+    report_created: bool = False,
 ) -> Dict[str, Any]:
     from backend.db.neo4j_db import (
         build_fallback_graph_query_plan,
@@ -822,6 +823,8 @@ def llm_chat_with_audio(
             "danger_active": conversation_state.danger_active,
             "dispatch_advice": conversation_state.dispatch_advice,
             "response_guides": response_guides,
+            "report_created": report_created,
+            "report_note": "通報已建立，系統已協助聯繫救援，不需要再叫使用者撥打119或110" if report_created else None,
         },
         ensure_ascii=False,
     )
@@ -941,10 +944,162 @@ _EMPTY_CONTEXT_RESPONSE = ChatResponse(
 )
 
 
+def _voice_prompt_for_tts(text: str) -> str:
+    prompt = (text or "").strip()
+    if not prompt:
+        return ""
+
+    replacements = {
+        "CPR": "胸外按壓",
+        "cpr": "胸外按壓",
+        "AED": "自動體外心臟電擊器",
+        "aed": "自動體外心臟電擊器",
+        "119": "一一九",
+        "110": "一一零",
+    }
+    for old, new in replacements.items():
+        prompt = prompt.replace(old, new)
+
+    prompt = prompt.replace("是否有", "有沒有")
+    prompt = prompt.replace("是否", "有沒有")
+    prompt = prompt.replace("有沒有有", "有沒有")
+    prompt = prompt.replace("系統已列為高風險通報。", "")
+    prompt = prompt.replace("高風險通報。", "")
+    prompt = re.sub(r"\s+", " ", prompt)
+    prompt = re.sub(r"[;；]+", "。", prompt)
+    return prompt.strip()
+
+
+def _trim_voice_prompt(prompt: str, *, max_chars: int = 38) -> str:
+    prompt = prompt.strip()
+    if len(prompt) <= max_chars:
+        return prompt
+    sentences = _split_sentences(prompt)
+    shortened = ""
+    for sentence in sentences:
+        if len(shortened + sentence) > max_chars:
+            break
+        shortened += sentence
+    return shortened.strip() or prompt[:max_chars].rstrip("，、。") + "。"
+
+
+def _finalize_voice_prompt(prompt: str) -> str:
+    """Normalize the final prompt before it is sent to TTS."""
+    return _voice_prompt_for_tts(prompt)
+
+
+def _with_voice_empathy(prompt: str, *, urgent: bool = False) -> str:
+    prompt = prompt.strip()
+    if not prompt:
+        return ""
+
+    prompt = re.sub(r"^我在[，,。]?", "", prompt).strip()
+    if urgent:
+        prefix = "我在，先別慌。我會陪你確認。"
+    else:
+        prefix = "我在，我會協助你。"
+    return _trim_voice_prompt(_finalize_voice_prompt(prefix + prompt))
+
+
+def _build_dynamic_voice_prompt(
+    reply: str,
+    next_question_text: Optional[str],
+    *,
+    urgent: bool = False,
+) -> str:
+    combined = " ".join(part.strip() for part in [reply, next_question_text or ""] if part and part.strip())
+    combined = _voice_prompt_for_tts(combined)
+    if not combined:
+        return ""
+
+    sentences = _split_sentences(combined)
+    action_terms = [
+        "請",
+        "確認",
+        "保持",
+        "準備",
+        "撤離",
+        "遠離",
+        "不要",
+        "開擴音",
+        "觀察",
+        "回報",
+        "如果沒有",
+        "如果情況",
+        "有沒有",
+        "先",
+        "現在",
+        "告訴我",
+    ]
+    action_sentences = [
+        sentence.strip()
+        for sentence in sentences
+        if sentence.strip() and _has_any(sentence, action_terms)
+    ]
+    candidate_sentences = action_sentences or sentences
+
+    picked: List[str] = []
+    for sentence in candidate_sentences:
+        normalized = sentence.strip()
+        if not normalized:
+            continue
+        if _has_any(normalized, ["收到", "目前這比較像", "我先幫你", "我在這裡"]):
+            continue
+        if "系統已列為" in normalized and not _has_any(normalized, ["請", "確認", "保持"]):
+            continue
+        normalized = normalized.replace("你的家人目前沒有反應，", "")
+        normalized = normalized.replace("患者目前沒有反應，", "")
+        normalized = normalized.replace("傷者目前沒有反應，", "")
+        normalized = normalized.replace("請保持手機可接通，現在確認", "先確認")
+        normalized = normalized.replace("請保持手機可接通。現在確認", "先確認")
+        normalized = normalized.replace("請保持手機可接通，", "")
+        normalized = normalized.replace("現在確認", "先確認")
+        picked.append(normalized)
+        if len("".join(picked)) >= 48 or len(picked) >= 2:
+            break
+
+    prompt = "".join(picked).strip() or combined
+    return _with_voice_empathy(prompt, urgent=urgent)
+
+
+def _build_medical_step_voice_prompt(
+    ex: Extracted,
+    reply: str,
+    next_question_text: Optional[str],
+) -> str:
+    """Return one CPR/AED voice step instead of reading a whole paragraph."""
+    if ex.category != "醫療急症":
+        return ""
+
+    combined = " ".join(
+        part.strip()
+        for part in [reply, next_question_text or ""]
+        if part and part.strip()
+    )
+    if not combined:
+        return ""
+
+    if _has_any(combined, ["打開 AED", "AED 已經到現場", "AED 電源", "貼上電極片"]):
+        return "好，打開機器，照著語音，一步一步來。分析的時候，不要碰他。"
+
+    if _has_any(combined, ["找 AED", "尋找 AED", "旁邊的人找 AED"]):
+        return "我在，請旁邊的人，去找自動體外心臟電擊器。你先看他，有沒有在呼吸。"
+
+    if _has_any(combined, ["CPR", "胸外按壓", "開始按壓"]):
+        return "我在陪你，不要怕。雙手交疊，放在胸口中央，用力往下壓，速度穩定——你做得到的。"
+
+    if _has_any(combined, ["胸口", "正常呼吸", "沒有正常呼吸", "呼吸可能不正常"]):
+        return "我在，深呼吸一下。看他的胸口，有沒有起伏，有沒有在呼吸。"
+
+    return ""
+
+
 def _build_voice_fields(
     ex: Extracted,
     risk_level: str,
     should_escalate: bool,
+    reply: str = "",
+    next_question_text: Optional[str] = None,
 ) -> tuple:
     """產生語音播報欄位 (voice_prompt, voice_priority, should_speak)。
 
@@ -960,31 +1115,48 @@ def _build_voice_fields(
         return None, None, False
 
     cat = ex.category or ""
+    dynamic_prompt = _build_dynamic_voice_prompt(
+        reply,
+        next_question_text,
+        urgent=bool(risk_level == "High" or is_immediate),
+    )
+    step_prompt = _build_medical_step_voice_prompt(ex, reply, next_question_text)
     if cat == "醫療急症":
         if ex.conscious is False or ex.breathing_difficulty is True:
-            prompt = "系統已列為高風險通報。請確認患者是否有正常呼吸；如果沒有，請準備依救援指示開始 CPR。"
+            prompt = "我在，深呼吸一下。看他的胸口，有沒有起伏，有沒有在呼吸。"
             priority = "high"
         else:
-            prompt = "系統已列為高風險通報。請保持手機可接通，持續觀察患者狀況。"
+            prompt = "我在，請持續觀察他的狀況。有任何變化，隨時告訴我。"
             priority = "high"
     elif cat == "火災":
-        prompt = "系統已列為高風險通報。請立即疏散，遠離濃煙，保持低姿勢。"
+        prompt = "我在，請現在就離開，遠離濃煙，彎低身體移動，不要搭電梯。"
         priority = "high"
     elif cat in ["暴力事件", "可疑人士"]:
         if ex.weapon is True:
-            prompt = "系統已列為高風險通報。請立即撤離至安全位置，不要靠近現場。"
+            prompt = "我在，請先離開現場，移到安全的地方，不要回頭。"
             priority = "high"
         else:
-            prompt = "系統已列為高風險通報。請確認自身安全，保持手機可接通。"
+            prompt = "我在，你先確認自己安全，保持手機可接通。"
             priority = "medium"
     elif cat == "交通事故":
-        prompt = "系統已列為高風險通報。請確認是否有人受傷，並確保現場安全。"
+        prompt = "我在，請先移到安全的位置，確認現場有沒有人需要幫忙。"
         priority = "medium"
     else:
-        prompt = "系統已列為高風險通報。請保持手機可接通。"
+        prompt = "我在，請保持手機可接通，有任何變化，隨時告訴我。"
         priority = "medium"
 
-    return prompt, priority, True
+    is_critical_medical = cat == "醫療急症" and (
+        ex.conscious is False or ex.breathing_difficulty is True
+    )
+    if step_prompt:
+        # Specific CPR/AED guidance always takes priority
+        prompt = step_prompt
+    elif dynamic_prompt and not is_critical_medical:
+        # For critical medical (no breathing / unconscious), keep the structured
+        # prompt instead of echoing the LLM's clarifying question back as audio.
+        prompt = dynamic_prompt
+
+    return _finalize_voice_prompt(prompt), priority, True
 
 
 def _build_report_status_hint(
@@ -1010,6 +1182,7 @@ def process_chat_request(
     audio_context: Optional[Dict[str, Any]] = None,
     session_id: Optional[str] = None,
     user_context: Optional[ChatUserContext] = None,
+    report_created: bool = False,
 ) -> ChatResponse:
     context = " ".join(m.content for m in messages if m.role == "user").strip()
     latest_text = latest_user_text(messages)
@@ -1020,7 +1193,8 @@ def process_chat_request(
         return _EMPTY_CONTEXT_RESPONSE
 
     try:
-        data = llm_chat_with_audio(messages, audio_context, session_id, user_context)
+        data = llm_chat_with_audio(messages, audio_context, session_id, user_context,
+                                   report_created=report_created)
         extracted_raw = data.get("extracted", {}) or {}
         client_location_text = get_client_location_text(audio_context)
 
@@ -1043,8 +1217,9 @@ def process_chat_request(
         ex = merge_extracted(conversation_state, ex)
         # Re-apply slot resolver after merge so it fills any slots the LLM left as None
         ex = _apply_natural_turn_context(ex, messages)
-        # Plan B: LLM slot extractor for phrasing variants rule-based system missed
-        if llm_is_ready() and len(latest_text.strip()) > 4:
+        # Plan B: LLM slot extractor for phrasing variants rule-based system missed.
+        # Skip for natural-language models (ecare-v4): _apply_natural_turn_context already handles slots.
+        if llm_is_ready() and len(latest_text.strip()) > 4 and not _uses_natural_chat_model():
             from backend.services.semantic import llm_extract_slots
             ex = llm_extract_slots(latest_text, _last_assistant_text(messages), ex)
         if client_location_text:
@@ -1075,7 +1250,7 @@ def process_chat_request(
         semantic = semantic_understanding_from_payload(semantic_payload, audio_context, ex)
         if not isinstance(semantic_payload, dict):
             semantic = heuristic_semantic_understanding(
-                context, audio_context, semantic.entities,
+                context, audio_context, semantic.entities, extracted=ex,
             )
 
         reply = data.get("reply") or "我會一步一步協助你整理資訊。"
@@ -1085,9 +1260,11 @@ def process_chat_request(
 
         reply, nq = contextualize_reply_and_question(messages, ex, reply, nq, risk_level)
         reply, nq = adapt_opening_turn_response(messages, reply, nq, ex, semantic)
-        reply = apply_semantic_tone(reply, semantic, risk_level, audio_context)
-        nq = next_question_from_semantic(nq, semantic, ex, risk_level, audio_context)
-        reply, nq = sanitize_reply_and_question(reply, nq, ex, risk_level)
+        reply = apply_semantic_tone(reply, semantic, risk_level, audio_context,
+                                    previous_assistant_text=_last_assistant_text(messages))
+        nq = next_question_from_semantic(nq, semantic, ex, risk_level, audio_context,
+                                         messages=messages)
+        reply, nq = sanitize_reply_and_question(reply, nq, ex, risk_level, messages=messages)
 
         dialogue_state = build_dialogue_state(messages, ex, semantic, risk_level, audio_context)
         log_chat_debug(
@@ -1097,7 +1274,13 @@ def process_chat_request(
             reply_changed=reply != llm_reply,
             next_question_changed=nq != llm_nq,
         )
-        voice_prompt, voice_priority, should_speak = _build_voice_fields(ex, risk_level, should_escalate)
+        voice_prompt, voice_priority, should_speak = _build_voice_fields(
+            ex,
+            risk_level,
+            should_escalate,
+            reply,
+            nq,
+        )
         return ChatResponse(
             reply=reply,
             risk_score=risk_score,
@@ -1133,6 +1316,7 @@ def process_chat_request(
                 weapon=ex.weapon,
                 danger_active=ex.danger_active,
             ),
+            extracted=ex,
         )
         if level == "High":
             reply = "我了解你現在很緊張，我會快速協助你整理資訊並引導你進行通報。"
@@ -1141,11 +1325,13 @@ def process_chat_request(
         else:
             reply = "我在這裡，我會協助你把事情講清楚。"
 
-        nq = next_question_from_semantic(next_question(ex, level), semantic, ex, level, audio_context)
+        nq = next_question_from_semantic(next_question(ex, level), semantic, ex, level,
+                                         audio_context, messages=messages)
         reply, nq = contextualize_reply_and_question(messages, ex, reply, nq, level)
         reply, nq = adapt_opening_turn_response(messages, reply, nq, ex, semantic)
-        reply = apply_semantic_tone(reply, semantic, level, audio_context)
-        reply, nq = sanitize_reply_and_question(reply, nq, ex, level)
+        reply = apply_semantic_tone(reply, semantic, level, audio_context,
+                                    previous_assistant_text=_last_assistant_text(messages))
+        reply, nq = sanitize_reply_and_question(reply, nq, ex, level, messages=messages)
 
         dialogue_state = build_dialogue_state(messages, ex, semantic, level, audio_context)
         log_chat_debug(
@@ -1153,7 +1339,13 @@ def process_chat_request(
             reply, nq, level, score,
         )
         escalate = (level == "High")
-        voice_prompt, voice_priority, should_speak = _build_voice_fields(ex, level, escalate)
+        voice_prompt, voice_priority, should_speak = _build_voice_fields(
+            ex,
+            level,
+            escalate,
+            reply,
+            nq,
+        )
         return ChatResponse(
             reply=reply,
             risk_score=score,

@@ -15,7 +15,10 @@ from backend.db.postgres import (
     make_id,
     now_str,
 )
-from backend.models import ReportCreate, ReportItem, UserCreate, UserItem
+from backend.models import (
+    ReportCreate, ReportItem, ReportStatusLogItem, ReportStatusUpdate,
+    UserCreate, UserItem,
+)
 
 router = APIRouter()
 
@@ -85,6 +88,61 @@ def create_report(payload: ReportCreate):
     except Exception as e:
         print(f"❌ create_report 失敗：{e}")
         raise HTTPException(status_code=500, detail=f"資料庫寫入失敗：{str(e)}")
+
+
+# ======================
+# Report status log
+# ======================
+
+_TERMINAL_STATUSES = {"我已安全", "救援已抵達", "情況緩和", "撤離完成"}
+
+
+@router.post("/reports/{report_id}/status", response_model=ReportStatusLogItem)
+def add_report_status(report_id: str, payload: ReportStatusUpdate):
+    ensure_db_available()
+    ts = now_str()
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            INSERT INTO incident_status_log (report_id, status, note, created_at)
+            VALUES (%s, %s, %s, %s)
+            RETURNING *;
+            """,
+            (report_id, payload.status, payload.note, ts),
+        )
+        row = cur.fetchone()
+        if payload.status in _TERMINAL_STATUSES:
+            cur.execute(
+                "UPDATE case_records SET status = %s, updated_at = %s WHERE id = %s;",
+                (payload.status, ts, report_id),
+            )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return ReportStatusLogItem(**dict(row))
+    except Exception as e:
+        print(f"❌ add_report_status 失敗：{e}")
+        raise HTTPException(status_code=500, detail=f"狀態記錄失敗：{str(e)}")
+
+
+@router.get("/reports/{report_id}/status", response_model=List[ReportStatusLogItem])
+def get_report_status_log(report_id: str):
+    ensure_db_available()
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT * FROM incident_status_log WHERE report_id = %s ORDER BY id ASC;",
+            (report_id,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [ReportStatusLogItem(**dict(r)) for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查詢失敗：{str(e)}")
 
 
 # ======================

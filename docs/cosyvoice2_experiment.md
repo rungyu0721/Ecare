@@ -1,12 +1,15 @@
 # CosyVoice2-0.5B TTS Experiment
 
-這份文件是 E-CARE 的本地 TTS 實驗流程。目標是先確認
-`CosyVoice2-0.5B` 能不能把 `voice_prompt` 轉成繁中語音檔，再決定是否接進
-FastAPI `/tts`。
+這份文件記錄 E-CARE 本地語音播報實驗。目標是把後端產生的 `voice_prompt` 轉成語音，之後可以由 Flutter 播放。
 
-目前這些步驟不會改動正式後端，也不會影響 Flutter 聊天流程。
+目前結論：
 
-## 1. 建議目錄
+- CosyVoice2 可以在本機產生中文語音。
+- 繁體文字直接送進模型時，發音較容易糊或不穩。
+- 實作上保留 UI 繁體，但在 TTS 前自動做繁轉簡，語音品質明顯穩定很多。
+- TTS 環境建議和主專案 `.venv` 分開，避免 PyTorch / torchaudio 版本影響後端。
+
+## 1. Directory Layout
 
 ```text
 Ecare/
@@ -17,11 +20,13 @@ Ecare/
 ├── scripts/
 │   └── tts/
 │       ├── download_cosyvoice2.py
-│       └── cosyvoice2_probe.py
+│       ├── cosyvoice2_probe.py
+│       ├── cosyvoice2_runtime.py
+│       └── serve_tts.py
 └── requirements-tts.txt
 ```
 
-`external/` 建議保持 untracked，只放下載或 clone 下來的第三方內容。
+`external/`、`.venv-tts/`、wav/mp3 輸出都不進 git。
 
 ## 2. Clone CosyVoice
 
@@ -33,96 +38,149 @@ git submodule update --init --recursive
 cd ..\..
 ```
 
-## 3. 安裝實驗依賴
-
-先使用你目前專案的 `.venv`，或另外開一個 TTS 專用 venv。CosyVoice 會需要
-PyTorch / torchaudio，CUDA 版本依你的電腦或 4080 環境調整。
+## 3. 建立 TTS 環境
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-tts.txt
-.\.venv\Scripts\python.exe -m pip install -r external\CosyVoice\requirements.txt
+py -3.11 -m venv .venv-tts
+.\.venv-tts\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+.\.venv-tts\Scripts\python.exe -m pip install -r requirements-tts.txt
 ```
 
-如果 PyTorch / torchaudio 安裝失敗，請改用 PyTorch 官方指令安裝符合你 CUDA
-版本的 wheel，再重跑 CosyVoice requirements。
-
-## 4. 下載模型
+CosyVoice 的 requirements 會拉到 `openai-whisper`，在 Windows 上可能遇到 build isolation 缺 `pkg_resources`。可用這個方式處理：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\tts\download_cosyvoice2.py
+.\.venv-tts\Scripts\python.exe -m pip install --no-build-isolation openai-whisper
+Get-Content external\CosyVoice\requirements.txt |
+  Where-Object { $_ -notmatch 'whisper' } |
+  Set-Content external\CosyVoice\requirements-no-whisper.txt
+.\.venv-tts\Scripts\python.exe -m pip install -r external\CosyVoice\requirements-no-whisper.txt
 ```
 
-預設會下載到：
+RTX 50 系列如果遇到 `no kernel image is available for execution on the device`，代表 PyTorch wheel 不支援目前 GPU 架構。需要改裝支援 Blackwell 的 PyTorch，或先用 CPU 測試。
+
+## 4. Download Model
+
+```powershell
+.\.venv-tts\Scripts\python.exe scripts\tts\download_cosyvoice2.py
+```
+
+模型會下載到：
 
 ```text
 external/models/CosyVoice2-0.5B
 ```
 
-## 5. 測試產生 wav
+## 5. 準備 Zero-Shot Prompt
 
-```powershell
-.\.venv\Scripts\python.exe scripts\tts\cosyvoice2_probe.py
-```
-
-預設使用 CosyVoice2 官方範例的 zero-shot 方式，會用
-`external/CosyVoice/asset/zero_shot_prompt.wav` 當參考音色。
-
-預設測試句：
+建議放一段清楚、穩定、13 秒左右的中文語音：
 
 ```text
-系統已列為高風險通報，請確認患者是否有正常呼吸。
+scripts/data/tts_prompt_ecare.mp3
 ```
 
-輸出檔：
+轉成 CosyVoice 比較穩的 wav 格式：
+
+```powershell
+ffmpeg -i scripts\data\tts_prompt_ecare.mp3 -ar 16000 -ac 1 scripts\data\tts_prompt_ecare.wav
+```
+
+建議 prompt 文字和錄音內容一致，並使用簡體：
+
+```text
+您好，我是紧急助手。请保持冷静，我会一步一步协助您确认现场状况。请先注意自身安全，并依照画面提示回报最新变化。
+```
+
+## 6. Probe
+
+```powershell
+.\.venv-tts\Scripts\python.exe scripts\tts\cosyvoice2_probe.py `
+  --prompt-wav scripts\data\tts_prompt_ecare.wav `
+  --prompt-text "您好，我是紧急助手。请保持冷静，我会一步一步协助您确认现场状况。请先注意自身安全，并依照画面提示回报最新变化。" `
+  --text "系統已列為高風險通報，請確認患者是否有正常呼吸。"
+```
+
+輸出：
 
 ```text
 scripts/output/cosyvoice2_probe.wav
 ```
 
-自訂文字：
+播放：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\tts\cosyvoice2_probe.py --text "請先確認胸口有沒有起伏，並請旁邊的人協助找 AED。"
+Start-Process .\scripts\output\cosyvoice2_probe.wav
 ```
 
-列出可用說話人：
+## 7. Local TTS Service
+
+`serve_tts.py` 會讓 CosyVoice2 常駐載入，避免每次播報都重新載模型。
+
+建議平常直接用根目錄的啟動腳本：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\tts\cosyvoice2_probe.py --list-speakers
+.\start_tts.ps1
 ```
 
-如果模型沒有 `spk2info.pt`，`--list-speakers` 可能會顯示沒有可用 speaker。
-這是 CosyVoice2 zero-shot 模型常見狀況，不代表模型壞掉。請直接用預設
-`zero-shot` mode 測試。
+預設使用 `subprocess` backend。它會慢一點，但行為最接近已驗證成功的 `cosyvoice2_probe.py`。
 
-指定說話人：
+若之後要測常駐模型低延遲模式，可以另外跑：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\tts\cosyvoice2_probe.py --mode sft --speaker "中文女"
+.\start_tts.ps1 -Backend runtime
 ```
 
-使用 instruct2 控制語氣：
+如果要手動指定參數，也可以直接執行 service：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\tts\cosyvoice2_probe.py --mode instruct2 --text "請確認胸口有沒有起伏，並請旁邊的人協助找 AED。"
+.\.venv-tts\Scripts\python.exe scripts\tts\serve_tts.py `
+  --prompt-wav scripts\data\tts_prompt_ecare.wav `
+  --prompt-text "您好，我是紧急助手。请保持冷静，我会一步一步协助您确认现场状况。请先注意自身安全，并依照画面提示回报最新变化。" `
+  --backend subprocess
 ```
 
-## 6. 評估標準
-
-- 中文是否自然、清楚。
-- 是否能穩定讀繁體中文。
-- 第一次載入模型花多久。
-- 單句 `voice_prompt` 合成花多久。
-- CPU / GPU 記憶體是否可接受。
-- Windows 本機與遠端 4080 哪個環境比較適合部署。
-
-## 7. 成功後下一步
-
-如果 probe 成功，下一階段再新增：
+預設服務：
 
 ```text
-FastAPI /tts endpoint
-Flutter -> /tts -> wav -> audioplayers
+http://127.0.0.1:8011
 ```
 
-正式接入後，Flutter 仍然只呼叫 E-CARE 後端，不直接依賴 CosyVoice。
+健康檢查：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8011/health
+```
+
+產生一段語音：
+
+```powershell
+Invoke-WebRequest `
+  -Uri http://127.0.0.1:8011/tts `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{"text":"系統已列為高風險通報，請確認患者是否有正常呼吸。"}' `
+  -OutFile scripts\output\tts_service_test.wav
+```
+
+播放：
+
+```powershell
+Start-Process .\scripts\output\tts_service_test.wav
+```
+
+可調語速：
+
+```powershell
+Invoke-WebRequest `
+  -Uri http://127.0.0.1:8011/tts `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{"text":"請保持冷靜，先確認患者是否有正常呼吸。","speed":0.9}' `
+  -OutFile scripts\output\tts_service_test.wav
+```
+
+## 8. Next
+
+- 後端新增 TTS client，呼叫 `http://127.0.0.1:8011/tts`。
+- Flutter 改成播放後端回傳或代理的 wav，而不是只用 Windows 系統語音。
+- 保留 Windows 系統語音作為 fallback。
+- 針對高風險通報、CPR、AED、燒燙傷等常用語句做固定 voice prompt 測試。

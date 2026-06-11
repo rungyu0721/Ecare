@@ -2,6 +2,7 @@
 import pytest
 
 from backend.services.postprocess import (
+    contextualize_reply_and_question,
     has_aed_arrived,
     has_called_119,
     has_no_normal_breathing,
@@ -9,6 +10,7 @@ from backend.services.postprocess import (
     previous_question_intent,
     remove_duplicate_next_question,
 )
+from backend.models import ChatMessage, Extracted
 
 
 # ======================
@@ -61,6 +63,7 @@ def test_aed_arrived_phrases():
     assert has_aed_arrived("AED到了") is True
     assert has_aed_arrived("有AED") is True
     assert has_aed_arrived("拿到AED") is True
+    assert has_aed_arrived("我找到 AED 了") is True
     assert has_aed_arrived("AED在旁邊") is True
 
 
@@ -162,3 +165,24 @@ def test_non_question_reply_no_removal():
     reply = "了解，我會幫你整理通報內容。"
     next_q = "請問傷者意識是否清醒？"
     assert remove_duplicate_next_question(reply, next_q) == next_q
+
+
+def test_aed_arrived_context_goes_to_aed_guidance():
+    messages = [
+        ChatMessage(
+            role="assistant",
+            content="請確認胸口是否有起伏、有沒有正常呼吸；如果沒有正常呼吸，請開擴音聽救援指示，並請旁邊的人找 AED。",
+        ),
+        ChatMessage(role="user", content="我找到 AED 了，現在要怎麼做？"),
+    ]
+    ex = Extracted(category="醫療急症", people_injured=True)
+    reply, next_q = contextualize_reply_and_question(
+        messages,
+        ex,
+        "收到，目前這比較像是醫療急症，我先幫你確認症狀變化。",
+        "請確認他有沒有正常呼吸？",
+        "High",
+    )
+    assert "AED 已經到現場" in reply
+    assert "打開 AED" in next_q
+    assert "電擊" in next_q

@@ -140,6 +140,9 @@ def has_high_risk_context_signal(text: str) -> bool:
         return True
     if any(phrase in text for phrase in DIRECT_HIGH_RISK_PHRASES):
         return True
+    # Emergency response actions (CPR/AED/calling 119/ambulance) imply an active high-risk event
+    if any(term in text for term in ["AED", "CPR", "胸外按壓", "救護車", "打119", "撥119", "叫119"]):
+        return True
     weapon_terms = ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]
     has_weapon_negation = contains_negated(text, weapon_terms) or contains_uncertain(text, weapon_terms)
     return any([

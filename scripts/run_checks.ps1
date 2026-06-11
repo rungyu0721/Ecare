@@ -12,6 +12,9 @@ function Invoke-Check {
     Write-Host ""
     Write-Host "==> $Name" -ForegroundColor Cyan
     & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Name failed with exit code $LASTEXITCODE"
+    }
 }
 
 Invoke-Check "Backend pytest" {
