@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../app.dart';
-
 class RiskBanner extends StatefulWidget {
   const RiskBanner({
     super.key,
@@ -28,7 +26,7 @@ class _RiskBannerState extends State<RiskBanner>
       vsync: this,
       duration: const Duration(milliseconds: 900),
     );
-    _pulseOpacity = Tween<double>(begin: 0.25, end: 0.7).animate(
+    _pulseOpacity = Tween<double>(begin: 0.18, end: 0.48).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
     if (widget.riskLevel == 'High') {
@@ -57,30 +55,30 @@ class _RiskBannerState extends State<RiskBanner>
   Widget build(BuildContext context) {
     final style = switch (widget.riskLevel) {
       'High' => (
-          background: const Color(0xFFFFEBEB),
+          background: const Color(0xFFFFEEEB),
           foreground: const Color(0xFF8F2E22),
           border: const Color(0xFFD57B71),
           barColor: const Color(0xFFB83A2B),
           title: '高風險',
-          label: '建議優先聯絡緊急聯絡人，必要時立即通報。',
+          label: '請優先判斷 119 或 110。保留 GPS、地標、同行人數、傷勢、手機電量與是否受困。',
           icon: Icons.warning_rounded,
         ),
       'Medium' => (
-          background: const Color(0xFFFFF4DD),
-          foreground: const Color(0xFF7A5C1C),
-          border: const Color(0xFFD3B06F),
+          background: const Color(0xFFFFF6DE),
+          foreground: const Color(0xFF75540F),
+          border: const Color(0xFFD5B66E),
           barColor: const Color(0xFFC8882A),
           title: '中風險',
-          label: '請持續補充事件細節，系統會協助判斷後續處置。',
+          label: '請補充位置、附近地標、是否有人受傷、能否移動，以及是否需要警消協助。',
           icon: Icons.info_outline_rounded,
         ),
       _ => (
-          background: const Color(0xFFFFFFF5),
-          foreground: const Color(0xFF3A2A1D),
-          border: const Color(0xFFCDB89C),
-          barColor: EcareApp.muted,
+          background: const Color(0xFFF3FAF6),
+          foreground: const Color(0xFF2F5D50),
+          border: const Color(0xFFB8D6C8),
+          barColor: const Color(0xFF2F5D50),
           title: '低風險',
-          label: '目前風險較低，仍建議持續留意狀況變化。',
+          label: '目前未偵測到立即危險，仍可持續補充狀況與位置，必要時系統會重新判斷。',
           icon: Icons.check_circle_outline_rounded,
         ),
     };
@@ -92,8 +90,8 @@ class _RiskBannerState extends State<RiskBanner>
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: style.background,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: style.border, width: 1.3),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: style.border, width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -106,9 +104,8 @@ class _RiskBannerState extends State<RiskBanner>
                 style.title,
                 style: TextStyle(
                   color: style.foreground,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w900,
                   fontSize: 15,
-                  letterSpacing: 0.4,
                 ),
               ),
               const Spacer(),
@@ -117,7 +114,7 @@ class _RiskBannerState extends State<RiskBanner>
                 style: TextStyle(
                   color: style.foreground,
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
@@ -159,11 +156,12 @@ class _RiskBannerState extends State<RiskBanner>
         animation: _pulseOpacity,
         builder: (context, child) => Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(10),
             boxShadow: <BoxShadow>[
               BoxShadow(
-                color: const Color(0xFFB83A2B).withValues(alpha: _pulseOpacity.value),
-                blurRadius: 18,
+                color: const Color(0xFFB83A2B)
+                    .withValues(alpha: _pulseOpacity.value),
+                blurRadius: 14,
                 spreadRadius: 1,
               ),
             ],

@@ -79,7 +79,9 @@ def get_dispatch_advice(
     if category == "醫療急症":
         return "建議派遣：救護車"
     if category == "暴力事件":
-        return "建議派遣：警察，必要時通知救護車待命" if weapon else "建議派遣：警察"
+        if weapon or people_injured:
+            return "建議派遣：警察，必要時通知救護車待命"
+        return "建議派遣：警察"
     if category == "交通事故":
         return "建議派遣：警察 + 救護車" if people_injured else "建議派遣：警察"
     if category == "可疑人士":

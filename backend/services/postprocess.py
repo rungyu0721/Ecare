@@ -35,6 +35,7 @@ from backend.services.semantic import (
     has_known_location_context,
 )
 from backend.services.first_aid_guides import get_guide
+from backend.services.incident_taxonomy import is_remote_rescue_extracted
 
 
 # 已說過就不再重複的固定句型
@@ -64,8 +65,14 @@ def _remove_repeated_phrases(text: str, assistant_history: List[str]) -> str:
     return result.strip("，。！？ ")
 
 
-def _build_unresponsive_next_q(previous_assistant_text: str) -> str:
+def _build_unresponsive_next_q(previous_assistant_text: str, *, remote_rescue: bool = False) -> str:
     """根據前一輪已說的內容，決定意識喪失時的下一步引導，避免重複。"""
+    if remote_rescue:
+        return (
+            "請保持手機可接通並保留電力；如果已接通 119，請開擴音依照指示處理，"
+            "同時準備回報 GPS 座標、步道地標、同行人數和傷者狀況。"
+        )
+
     prev = previous_assistant_text or ""
     already_aed = "AED" in prev
     already_cpr = "CPR" in prev or "胸外按壓" in prev
@@ -141,6 +148,14 @@ def has_aed_arrived(text: str) -> bool:
 def cpr_guidance_for_unresponsive(ex: Extracted, *, aed_ready: bool = False) -> tuple[str, str]:
     if aed_ready:
         return get_guide("cpr_aed_ready")
+    if is_remote_rescue_extracted(ex.symptom_summary):
+        subject = "你的家人" if ex.reporter_role == "照顧者/家屬" else "傷者"
+        reply = f"收到，{subject}目前沒有正常反應或呼吸，這是高風險狀況，請立刻撥打 119。"
+        advice = (
+            "請保持手機可接通並保留電力；如果已接通 119，請開擴音依照指示處理，"
+            "同時準備回報 GPS 座標、步道地標、同行人數和傷者狀況。"
+        )
+        return reply, advice
     subject = "你的家人" if ex.reporter_role == "照顧者/家屬" else "傷者"
     reply, advice = get_guide("cpr_no_aed")
     return reply.format(subject=subject), advice
@@ -305,7 +320,10 @@ def apply_short_answer_to_event_slot(
             next_q = "呼吸是否正常？有沒有喘不過氣、嘴唇發紫，或症狀快速加重？"
         else:
             reply = "收到，傷者目前沒有明確反應，這需要立即處理。"
-            next_q = _build_unresponsive_next_q(previous_assistant_text)
+            next_q = _build_unresponsive_next_q(
+                previous_assistant_text,
+                remote_rescue=is_remote_rescue_extracted(ex.symptom_summary),
+            )
         return reply, next_q
 
     if intent == "breathing" and ex.category == "醫療急症":
@@ -445,7 +463,10 @@ def contextualize_reply_and_question(
             ex.conscious = False
             ex.breathing_difficulty = True
             reply = "好，做得好！繼續保持按壓節奏。"
-            next_q = "AED 有找到了嗎？請保持按壓速度每秒兩下，深度約 5 公分，直到 AED 或救援人員到位。"
+            if is_remote_rescue_extracted(ex.symptom_summary):
+                next_q = "請保持手機可接通並保留電力；如果已接通 119，請開擴音依照救援指示繼續。"
+            else:
+                next_q = "AED 有找到了嗎？請保持按壓速度每秒兩下，深度約 5 公分，直到 AED 或救援人員到位。"
             return reply, next_q
         # User acknowledged CPR instructions ("好") — continue guidance
         _CPR_INSTRUCTION_TERMS = ["胸口中央", "往下壓", "按壓", "胸外按壓"]
@@ -453,8 +474,12 @@ def contextualize_reply_and_question(
         if (is_yes(latest_user_text) or _simple_yes) and any(
             term in previous_assistant_text for term in _CPR_INSTRUCTION_TERMS
         ):
-            reply = "好，繼續做，保持節奏。旁邊有人去找 AED 了嗎？"
-            next_q = "AED 找到了嗎？按壓速度每秒兩下，深度約 5 公分，繼續直到 AED 或救援人員到位。"
+            if is_remote_rescue_extracted(ex.symptom_summary):
+                reply = "好，繼續照 119 指示做，保持節奏。"
+                next_q = "請保留手機電力並開擴音，持續回報傷者呼吸、意識和你們的位置。"
+            else:
+                reply = "好，繼續做，保持節奏。旁邊有人去找 AED 了嗎？"
+                next_q = "AED 找到了嗎？按壓速度每秒兩下，深度約 5 公分，繼續直到 AED 或救援人員到位。"
             return reply, next_q
         if has_no_normal_breathing(latest_user_text):
             ex.people_injured = True
@@ -462,7 +487,10 @@ def contextualize_reply_and_question(
             return cpr_guidance_for_unresponsive(ex)
         if has_called_119(latest_user_text):
             reply = "收到，很好！119 已通報，救援流程已啟動，請保持通話或手機可接通。"
-            next_q = "請回報傷者目前意識和正常呼吸狀況；如果沒有正常呼吸，請依救援指示開始 CPR，並請旁邊的人找 AED。"
+            if is_remote_rescue_extracted(ex.symptom_summary):
+                next_q = "請回報 GPS 座標、步道地標、同行人數、手機電量，以及傷者目前意識和呼吸狀況。"
+            else:
+                next_q = "請回報傷者目前意識和正常呼吸狀況；如果沒有正常呼吸，請依救援指示開始 CPR，並請旁邊的人找 AED。"
             return reply, next_q
 
     first_aid_result = first_aid_guidance_for_text(latest_user_text, ex)

@@ -29,6 +29,7 @@ from backend.services.extraction import (
     normalize_location_candidate,
 )
 from backend.services.llm import call_llm, llm_is_ready, parse_llm_json_text
+from backend.services.incident_taxonomy import has_remote_rescue_signal
 
 
 # ======================
@@ -181,7 +182,12 @@ def build_fallback_graph_query_plan(
         injury_keyword = "無明確傷亡"
 
     return GraphQueryPlan(
-        event_keyword=normalize_category_name(conversation_state.category),
+        event_keyword=(
+            "醫療急症"
+            if has_remote_rescue_signal(latest_text)
+            and normalize_category_name(conversation_state.category) in [None, "待確認"]
+            else normalize_category_name(conversation_state.category)
+        ),
         injury_keyword=injury_keyword,
         location_keyword=location_keyword,
         emotion_keyword=emotion_keyword,
@@ -233,6 +239,7 @@ def graph_reasoning_from_context(
 - query_goal 只能是：event_knowledge、location_context、user_context
 - search_text 要保留最能查圖的核心描述，盡量短
 - 如果使用者是在補充症狀或事件，不要把那句話當成地點
+- 山上、步道、國家公園、林道、溪谷、偏鄉的迷路、受困、失聯、摔落、失溫、中暑、高山症、溪水暴漲、手機快沒電，event_keyword 填「醫療急症」，search_text 保留山域/水域救援核心描述
 
 輸出格式：
 {{
@@ -428,6 +435,14 @@ def build_neo4j_hint(
         keywords = graph_knowledge.get("keywords") or []
         if keywords:
             lines.append(f"- 命中關鍵字：{', '.join(keywords)}")
+
+    if has_remote_rescue_signal(plan.search_text or ""):
+        lines.append("偏鄉/山區/國家公園救援提示：")
+        lines.append("- 若有迷路、受困、失聯、摔落、無法行走、中暑、失溫、高山症、溺水、溪水暴漲、落石坍方或手機快沒電，通常引導撥打 119。")
+        lines.append("- 若同時有暴力、犯罪、持刀、跟蹤、闖入或人身威脅，優先 110；若也有人受傷、火災或受困，提醒 110 與 119 都需要。")
+        lines.append("- 優先整理 GPS 座標、步道/地標、同行人數、傷勢、可否移動、手機電量、訊號、天候與天色。")
+        lines.append("- 不要建議使用者冒險移動、下切溪谷、靠近崖邊或搬動疑似骨折/墜落傷者。")
+        lines.append("- 不要假設附近有 AED；除非使用者明確說現場有 AED，否則不要主動要求尋找 AED。")
 
     if user_graph_context:
         events = user_graph_context.get("recent_events") or []

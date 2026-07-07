@@ -31,6 +31,14 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
+add_definitions(
+  -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNING
+  -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
+)
+
+if(MSVC)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNING /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")
+endif()
 
 # Compilation settings that should be applied to most targets.
 #
@@ -56,6 +64,26 @@ add_subdirectory("runner")
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
+
+if(MSVC)
+  foreach(plugin ${FLUTTER_PLUGIN_LIST})
+    set(plugin_target "${plugin}_plugin")
+    if(TARGET ${plugin_target})
+      target_compile_definitions(${plugin_target} PRIVATE
+        _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNING
+        _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
+      )
+
+      get_target_property(plugin_options ${plugin_target} COMPILE_OPTIONS)
+      if(plugin_options)
+        list(REMOVE_ITEM plugin_options "/await" "/await:strict")
+        set_target_properties(${plugin_target} PROPERTIES
+          COMPILE_OPTIONS "${plugin_options}"
+        )
+      endif()
+    endif()
+  endforeach()
+endif()
 
 
 # === Installation ===

@@ -16,7 +16,7 @@ class LocationSnapshot {
     if (addressText != null && addressText.isNotEmpty) {
       return '$addressText (+/- ${accuracy.round()}m)';
     }
-    return '已取得目前位置 (+/- ${accuracy.round()}m)';
+    return '座標 $latitude, $longitude (+/- ${accuracy.round()}m)';
   }
 
   String toReportLocationText() {
@@ -24,6 +24,6 @@ class LocationSnapshot {
     if (addressText != null && addressText.isNotEmpty) {
       return '$addressText (+/- ${accuracy.round()}m)';
     }
-    return '已取得目前位置';
+    return '座標 $latitude, $longitude';
   }
 }

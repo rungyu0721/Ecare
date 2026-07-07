@@ -2,8 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 
-import '../models/audio_models.dart';
 import '../config/api_config.dart';
+import '../models/audio_models.dart';
 import '../models/chat_models.dart';
 import '../models/report_item.dart';
 
@@ -31,28 +31,28 @@ class ApiService {
       final statusCode = error.response?.statusCode;
       final detail = _extractDetail(error.response?.data);
 
-      if (detail.contains('資料庫')) {
-        return '$action失敗，目前資料庫暫時無法使用。';
+      if (detail.contains('profile') || detail.contains('個人資料')) {
+        return '$action失敗，請先確認個人資料已完成。';
       }
 
       if (detail.contains('Whisper') || detail.contains('Emotion model')) {
-        return '$action失敗，分析服務尚未準備完成。';
+        return '$action失敗，語音辨識或情緒模型暫時無法使用。';
       }
 
       if (statusCode == null) {
-        return '$action失敗，現在無法連線到伺服器。';
+        return '$action失敗，請確認後端服務是否已啟動，或稍後再試。';
       }
 
       if (statusCode >= 500) {
-        return '$action失敗，伺服器暫時忙碌，請稍後再試。';
+        return '$action失敗，後端服務暫時發生錯誤，請稍後再試。';
       }
 
       if (statusCode == 404) {
-        return '$action失敗，找不到對應的服務。';
+        return '$action失敗，找不到對應的 API 路徑。';
       }
 
       if (statusCode == 400) {
-        return '$action失敗，送出的資料格式不正確。';
+        return '$action失敗，送出的資料格式不完整或不正確。';
       }
     }
 

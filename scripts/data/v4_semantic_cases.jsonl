@@ -52,3 +52,10 @@
 {"id":"short_no_breathing","text":"沒有，好像沒有在呼吸","expected":{"category":"醫療急症","risk_level":"High","breathing_difficulty":true,"conscious":false}}
 {"id":"short_yes_conscious","text":"有，他有在動","expected":{"conscious":true}}
 {"id":"short_already_safe","text":"我已經在安全的地方了","expected":{"danger_active":false}}
+{"id":"remote_hiking_lost_low_battery","text":"我們在國家公園步道迷路了，手機快沒電也沒訊號","expected":{"category":"醫療急症","risk_level":"High","danger_active":true}}
+{"id":"remote_fall_cannot_walk","text":"朋友在山上摔落，腳疑似骨折，現在不能走","expected":{"category":"醫療急症","risk_level":"High","people_injured":true,"danger_active":true}}
+{"id":"remote_creek_rising","text":"我們溯溪時溪水暴漲，被困在溪谷旁邊","expected":{"category":"醫療急症","risk_level":"High","danger_active":true}}
+{"id":"remote_hypothermia_low_battery","text":"我們在山上有人失溫，手機快沒電了","expected":{"category":"醫療急症","risk_level":"High","people_injured":true,"danger_active":true}}
+{"id":"remote_heat_illness_trail","text":"登山步道上有人中暑頭暈，走不動了","expected":{"category":"醫療急症","risk_level":"High","people_injured":true,"danger_active":true}}
+{"id":"remote_knife_threat","text":"山屋附近有人拿刀威脅我們","expected":{"category":"暴力事件","risk_level":"High","weapon":true,"danger_active":true}}
+{"id":"remote_violence_injured","text":"山區有人攻擊我們，旁邊有人跌倒受傷","expected":{"category":"暴力事件","risk_level":"High","people_injured":true,"danger_active":true}}

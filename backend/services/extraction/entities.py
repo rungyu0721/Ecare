@@ -32,7 +32,8 @@ from .location import (
     location_quality_score,
     normalize_location_candidate,
 )
-from backend.services.incident_taxonomy import match_incident_taxonomy
+from backend.services.incident_taxonomy import has_remote_rescue_signal, match_incident_taxonomy
+from backend.services.incident_taxonomy import is_remote_rescue_extracted
 from backend.services.v4_event_semantics import (
     apply_v4_slot_hints,
     best_category_from_text,
@@ -112,6 +113,8 @@ def collect_symptoms(text: str) -> List[str]:
         ("燒到", "燒傷"), ("水泡", "水泡"),
         ("噎到", "異物哽塞"), ("哽塞", "異物哽塞"), ("噎住", "異物哽塞"),
         ("中暑", "中暑"), ("熱衰竭", "熱衰竭"), ("癲癇", "癲癇"),
+        ("失溫", "失溫"), ("高山症", "高山症"), ("脫水", "脫水"),
+        ("蛇咬", "蛇咬"), ("蜂螫", "蜂螫"),
         ("小擦傷", "擦傷"), ("擦傷", "擦傷"), ("小傷口", "小傷口"),
         ("輕傷", "輕傷"), ("咳", "咳嗽"),
     ]
@@ -184,6 +187,10 @@ def medical_follow_up_question(ex: Extracted, risk_level: str) -> str:
         if risk_level == "High":
             return f"請先讓{ref}離開熱源並撥打 119；如果安全，先用流動清水沖洗燙傷處，不要刺破水泡或撕黏住的衣物。"
         return f"請先用流動清水沖洗燙傷處至少 10 分鐘。燙傷面積大嗎？有水泡、皮膚焦黑或發白，或在臉、手掌、關節附近嗎？"
+    if is_remote_rescue_extracted(symptom_summary):
+        if risk_level == "High":
+            return "請立刻撥打 119，告知 GPS 座標或步道地標；保留手機電力，不要冒險移動或搬動疑似骨折/墜落傷者。"
+        return "請準備 GPS 座標、步道地標、同行人數、傷勢、手機電量與訊號，提供給 119 或救援人員。"
     if ex.conscious is True and any(token in symptom_summary for token in ["擦傷", "小傷口", "輕傷"]):
         return f"{ref}傷口現在有持續流血、需要止血包紮，或還有頭暈、想吐、明顯疼痛加重嗎？"
     if ex.conscious is False:
@@ -234,6 +241,11 @@ def enrich_extracted_details(ex: Extracted, text: str) -> Extracted:
     symptoms = collect_symptoms(text)
     if symptoms:
         ex.symptom_summary = merge_symptom_summary(ex.symptom_summary, "、".join(symptoms))
+
+    if has_remote_rescue_signal(text):
+        ex.symptom_summary = merge_symptom_summary(ex.symptom_summary, "疑似山域水域救援")
+        if ex.category in [None, "待確認"]:
+            ex.category = "醫療急症"
 
     if has_minor_injury_signal(text):
         ex.people_injured = True
@@ -299,7 +311,11 @@ def simple_extract(text: str) -> Extracted:
             "無反應", "叫不醒", "沒呼吸", "抽搐", "心臟痛", "胸悶",
             "半邊無力", "嘴歪", "講話不清楚", "頭暈", "胸痛", "呼吸困難",
             "喘不過氣", "吸不到氣", "不舒服", "發燒", "嘔吐",
-            "AED", "CPR", "胸外按壓", "救護車",
+            "AED", "CPR", "胸外按壓", "救護車", "登山迷路", "爬山迷路",
+            "山難", "山上迷路", "步道迷路", "國家公園迷路", "偏鄉受困",
+            "林道受困", "山區受困", "受困", "失聯", "墜落", "摔落",
+            "滑落", "墜谷", "溪水暴漲", "溯溪", "溪谷", "失溫",
+            "高山症", "中暑", "脫水", "蛇咬", "蜂螫",
         ]
     ):
         ex.category = "醫療急症"
@@ -308,7 +324,7 @@ def simple_extract(text: str) -> Extracted:
     else:
         ex.category = "待確認"
 
-    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐", "噎到", "哽塞", "噎住", "臉發紫", "中暑", "熱衰竭", "癲癇", "AED", "CPR", "胸外按壓", "救護車", "沒有在呼吸", "沒在呼吸"]
+    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐", "噎到", "哽塞", "噎住", "臉發紫", "中暑", "熱衰竭", "癲癇", "失溫", "高山症", "脫水", "蛇咬", "蜂螫", "墜落", "摔落", "滑落", "墜谷", "不能走", "無法行走", "AED", "CPR", "胸外按壓", "救護車", "沒有在呼吸", "沒在呼吸"]
     if contains_negated(text, ["受傷", "流血", "昏倒", "呼吸困難", "嘔吐"]):
         ex.people_injured = False
     elif any(k in text for k in injury_terms):
@@ -323,7 +339,7 @@ def simple_extract(text: str) -> Extracted:
         ex.weapon = None
     else:
         ex.weapon = True if any(k in text for k in weapon_terms) else None
-    ex.danger_active = True if has_child_protection_signal or any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場", "追人", "追我", "揮刀", "攻擊中"]) else None
+    ex.danger_active = True if has_child_protection_signal or any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場", "追人", "追我", "揮刀", "攻擊", "毆打", "攻擊中", "迷路", "迷途", "受困", "失聯", "溪水暴漲", "坍方", "落石", "土石流", "手機快沒電", "沒訊號", "不能走", "無法走", "無法行走", "走不動"]) else None
     if has_child_unresponsive_signal(text):
         ex.conscious = False
         ex.people_injured = True

@@ -26,7 +26,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   static const String _assistantGreeting =
-      '\u60a8\u597d\uff0c\u6211\u662f E-CARE\uff0c\u8acb\u554f\u73fe\u5728\u767c\u751f\u4e86\u4ec0\u9ebc\u4e8b\uff1f\n\u6211\u6703\u4e00\u6b65\u6b65\u5354\u52a9\u60a8\u3002';
+      '您好，我是 E-CARE 偏鄉與山區救援助理。請直接說明目前狀況、位置或附近地標，我會一步步協助您整理給 119/110 的重點。';
 
   final ApiService _apiService = ApiService();
   final AudioService _audioService = AudioService();
@@ -1209,8 +1209,8 @@ class _ChatScreenState extends State<ChatScreen> {
               children: <Widget>[
                 // Header bar
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 18, vertical: 14),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                   decoration: const BoxDecoration(
                     color: red,
                     borderRadius: BorderRadius.only(
@@ -1224,7 +1224,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           color: Colors.white, size: 22),
                       SizedBox(width: 8),
                       Text(
-                        'E-CARE \u9ad8\u98a8\u96aa\u901a\u5831',
+                        'E-CARE 高風險救援通報',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 17,
@@ -1282,8 +1282,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           decoration: BoxDecoration(
                             color: redLight,
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: red.withValues(alpha: 0.3)),
+                            border:
+                                Border.all(color: red.withValues(alpha: 0.3)),
                           ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1314,8 +1314,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           decoration: BoxDecoration(
                             color: const Color(0xFFFFF7EA),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: const Color(0xFFE5D3B5)),
+                            border: Border.all(color: const Color(0xFFE5D3B5)),
                           ),
                           child: Row(
                             children: <Widget>[
@@ -1340,9 +1339,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       ],
                       const SizedBox(height: 10),
                       const Text(
-                        '\u60c5\u6cc1\u6301\u7e8c\u60e1\u5316\u6642\uff0c\u8acb\u7acb\u5373\u64a5\u6253 110 \u6216 119\u3002',
-                        style: TextStyle(
-                            color: EcareApp.muted, fontSize: 12),
+                        '系統會依事件判斷 119/110：消防、醫療、受困與山域水域救援偏 119；人身威脅或犯罪偏 110；混合情境請同步通報。',
+                        style: TextStyle(color: EcareApp.muted, fontSize: 12),
                       ),
                       const SizedBox(height: 14),
                       // Action buttons
@@ -1354,8 +1352,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 Navigator.of(context).pop();
                                 await _createReportFromLatest();
                               },
-                              icon: const Icon(Icons.add_task_outlined,
-                                  size: 16),
+                              icon:
+                                  const Icon(Icons.add_task_outlined, size: 16),
                               label: const Text('\u5efa\u7acb\u901a\u5831'),
                               style: FilledButton.styleFrom(
                                 backgroundColor: red,
@@ -1369,8 +1367,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: TextButton(
-                              onPressed: () =>
-                                  Navigator.of(context).pop(),
+                              onPressed: () => Navigator.of(context).pop(),
                               style: TextButton.styleFrom(
                                 backgroundColor: const Color(0xFFF2F2F2),
                                 foregroundColor: EcareApp.text,
@@ -1460,7 +1457,7 @@ class _ChatScreenState extends State<ChatScreen> {
           onPressed: () => Navigator.of(context).maybePop(),
           icon: const Icon(Icons.arrow_back_ios_new, size: 18),
         ),
-        title: const Text('E-CARE \u7dca\u6025\u52a9\u624b'),
+        title: const Text('E-CARE 救援助理'),
         actions: <Widget>[
           IconButton(
             onPressed: _openRecords,
@@ -2006,221 +2003,261 @@ class _IncidentSnapshotPanelState extends State<_IncidentSnapshotPanel> {
       curve: Curves.easeInOut,
       alignment: Alignment.topCenter,
       child: Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5D3B5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: Row(
-              children: <Widget>[
-                Icon(Icons.checklist_rtl_rounded, color: _accentColor, size: 18),
-                const SizedBox(width: 6),
-                Text(
-                  _title,
-                  style: const TextStyle(
-                    color: EcareApp.text,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 14,
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE5D3B5)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Row(
+                children: <Widget>[
+                  Icon(Icons.checklist_rtl_rounded,
+                      color: _accentColor, size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    _title,
+                    style: const TextStyle(
+                      color: EcareApp.text,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                if (widget.riskLevel == 'High' && _expanded)
-                  const Icon(
-                    Icons.priority_high_rounded,
-                    color: Color(0xFF8F2E22),
+                  const Spacer(),
+                  if (widget.riskLevel == 'High' && _expanded)
+                    const Icon(
+                      Icons.priority_high_rounded,
+                      color: Color(0xFF8F2E22),
+                      size: 18,
+                    ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    color: _accentColor.withValues(alpha: 0.6),
                     size: 18,
                   ),
-                const SizedBox(width: 4),
-                Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
-                  color: _accentColor.withValues(alpha: 0.6),
-                  size: 18,
-                ),
-              ],
-            ),
-          ),
-          if (_expanded) ...[
-          const SizedBox(height: 9),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: widget.statusPills
-                .map((item) => _IncidentStatusChip(item: item))
-                .toList(),
-          ),
-          if (advice.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 9),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: BoxDecoration(
-                color: _accentColor.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _accentColor.withValues(alpha: 0.25),
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Icon(
-                    Icons.directions_run_rounded,
-                    size: 14,
-                    color: _accentColor,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      advice,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: _accentColor,
-                        fontSize: 12,
-                        height: 1.45,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),
-          ],
-          if (prompt.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 9),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: widget.shouldSpeak
-                    ? const Color(0xFFFFF0EA)
-                    : const Color(0xFFFFF7EA),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: widget.shouldSpeak
-                      ? EcareApp.primary.withValues(alpha: 0.35)
-                      : const Color(0xFFEBDCC3),
-                ),
+            if (_expanded) ...[
+              const SizedBox(height: 9),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: widget.statusPills
+                    .map((item) => _IncidentStatusChip(item: item))
+                    .toList(),
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: <Widget>[
-                  Icon(
-                    widget.isVoiceSpeaking
-                        ? Icons.graphic_eq_rounded
-                        : widget.shouldSpeak
-                            ? Icons.volume_up_rounded
-                            : Icons.record_voice_over_outlined,
-                    size: 15,
-                    color: widget.shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
-                  ),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      prompt,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color:
-                            widget.shouldSpeak ? EcareApp.primaryDark : EcareApp.text,
-                        fontSize: 12,
-                        height: 1.45,
-                        fontWeight:
-                            widget.shouldSpeak ? FontWeight.w800 : FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  SizedBox.square(
-                    dimension: 34,
-                    child: IconButton(
-                      tooltip: widget.isVoiceSpeaking ? '停止播報' : '重播語音提示',
-                      onPressed: widget.onToggleVoicePrompt,
-                      padding: EdgeInsets.zero,
-                      iconSize: 19,
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.white.withValues(alpha: 0.82),
-                        foregroundColor:
-                            widget.shouldSpeak ? EcareApp.primaryDark : EcareApp.muted,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+              const SizedBox(height: 9),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF7F5),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFC8DDD7)),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Icon(Icons.terrain_outlined,
+                        size: 14, color: Color(0xFF47665E)),
+                    SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '山區/偏鄉救援請優先補 GPS 或地標、同行人數、傷勢、手機電量與訊號。',
+                        style: TextStyle(
+                          color: Color(0xFF47665E),
+                          fontSize: 12,
+                          height: 1.45,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      icon: Icon(
-                        widget.isVoiceSpeaking
-                            ? Icons.stop_rounded
-                            : Icons.play_arrow_rounded,
-                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (advice.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 9),
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: _accentColor.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _accentColor.withValues(alpha: 0.25),
                     ),
                   ),
-                ],
-              ),
-            ),
-          ],
-          if (widget.reportCreated && widget.onStatusUpdate != null) ...<Widget>[
-            const SizedBox(height: 10),
-            const Divider(height: 1, color: Color(0xFFEBDCC3)),
-            const SizedBox(height: 10),
-            Row(
-              children: <Widget>[
-                const Icon(Icons.assignment_turned_in_outlined,
-                    size: 13, color: EcareApp.muted),
-                const SizedBox(width: 5),
-                const Text(
-                  '通報已建立 · 更新狀態',
-                  style: TextStyle(
-                    color: EcareApp.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Icon(
+                        Icons.directions_run_rounded,
+                        size: 14,
+                        color: _accentColor,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          advice,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _accentColor,
+                            fontSize: 12,
+                            height: 1.45,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 7),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: <Widget>[
-                  _StatusUpdateChip(
-                    icon: Icons.local_police_outlined,
-                    label: '救援已抵達',
-                    onTap: () => widget.onStatusUpdate!('救援已抵達'),
+              if (prompt.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 9),
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: widget.shouldSpeak
+                        ? const Color(0xFFFFF0EA)
+                        : const Color(0xFFFFF7EA),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: widget.shouldSpeak
+                          ? EcareApp.primary.withValues(alpha: 0.35)
+                          : const Color(0xFFEBDCC3),
+                    ),
                   ),
-                  const SizedBox(width: 7),
-                  _StatusUpdateChip(
-                    icon: Icons.sentiment_satisfied_outlined,
-                    label: '情況緩和',
-                    onTap: () => widget.onStatusUpdate!('情況緩和'),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: <Widget>[
+                      Icon(
+                        widget.isVoiceSpeaking
+                            ? Icons.graphic_eq_rounded
+                            : widget.shouldSpeak
+                                ? Icons.volume_up_rounded
+                                : Icons.record_voice_over_outlined,
+                        size: 15,
+                        color: widget.shouldSpeak
+                            ? EcareApp.primaryDark
+                            : EcareApp.muted,
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          prompt,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: widget.shouldSpeak
+                                ? EcareApp.primaryDark
+                                : EcareApp.text,
+                            fontSize: 12,
+                            height: 1.45,
+                            fontWeight: widget.shouldSpeak
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox.square(
+                        dimension: 34,
+                        child: IconButton(
+                          tooltip: widget.isVoiceSpeaking ? '停止播報' : '重播語音提示',
+                          onPressed: widget.onToggleVoicePrompt,
+                          padding: EdgeInsets.zero,
+                          iconSize: 19,
+                          style: IconButton.styleFrom(
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.82),
+                            foregroundColor: widget.shouldSpeak
+                                ? EcareApp.primaryDark
+                                : EcareApp.muted,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          icon: Icon(
+                            widget.isVoiceSpeaking
+                                ? Icons.stop_rounded
+                                : Icons.play_arrow_rounded,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 7),
-                  _StatusUpdateChip(
-                    icon: Icons.shield_outlined,
-                    label: '我已安全',
-                    onTap: () => widget.onStatusUpdate!('我已安全'),
+                ),
+              ],
+              if (widget.reportCreated &&
+                  widget.onStatusUpdate != null) ...<Widget>[
+                const SizedBox(height: 10),
+                const Divider(height: 1, color: Color(0xFFEBDCC3)),
+                const SizedBox(height: 10),
+                Row(
+                  children: <Widget>[
+                    const Icon(Icons.assignment_turned_in_outlined,
+                        size: 13, color: EcareApp.muted),
+                    const SizedBox(width: 5),
+                    const Text(
+                      '通報已建立 · 更新狀態',
+                      style: TextStyle(
+                        color: EcareApp.muted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: <Widget>[
+                      _StatusUpdateChip(
+                        icon: Icons.local_police_outlined,
+                        label: '救援已抵達',
+                        onTap: () => widget.onStatusUpdate!('救援已抵達'),
+                      ),
+                      const SizedBox(width: 7),
+                      _StatusUpdateChip(
+                        icon: Icons.sentiment_satisfied_outlined,
+                        label: '情況緩和',
+                        onTap: () => widget.onStatusUpdate!('情況緩和'),
+                      ),
+                      const SizedBox(width: 7),
+                      _StatusUpdateChip(
+                        icon: Icons.shield_outlined,
+                        label: '我已安全',
+                        onTap: () => widget.onStatusUpdate!('我已安全'),
+                      ),
+                      const SizedBox(width: 7),
+                      _StatusUpdateChip(
+                        icon: Icons.directions_run_outlined,
+                        label: '撤離完成',
+                        onTap: () => widget.onStatusUpdate!('撤離完成'),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 7),
-                  _StatusUpdateChip(
-                    icon: Icons.directions_run_outlined,
-                    label: '撤離完成',
-                    onTap: () => widget.onStatusUpdate!('撤離完成'),
-                  ),
-                ],
-              ),
-            ),
+                ),
+              ],
+            ], // if (_expanded)
           ],
-          ], // if (_expanded)
-        ],
-      ),
-    ), // Container
+        ),
+      ), // Container
     ); // AnimatedSize
   }
 }
@@ -2646,9 +2683,7 @@ class _DialogChip extends StatelessWidget {
         color: accent ? const Color(0xFFFFEEEB) : const Color(0xFFFFF7EA),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: accent
-              ? red.withValues(alpha: 0.35)
-              : const Color(0xFFE5D3B5),
+          color: accent ? red.withValues(alpha: 0.35) : const Color(0xFFE5D3B5),
         ),
       ),
       child: Row(

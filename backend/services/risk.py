@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import List
 
-from backend.services.incident_taxonomy import match_incident_taxonomy
+from backend.services.incident_taxonomy import has_remote_rescue_signal, match_incident_taxonomy
 from backend.services.v4_event_semantics import contains_negated, contains_uncertain, v4_risk_ceiling, v4_risk_floor
 
 
@@ -143,6 +143,15 @@ def has_high_risk_context_signal(text: str) -> bool:
     # Emergency response actions (CPR/AED/calling 119/ambulance) imply an active high-risk event
     if any(term in text for term in ["AED", "CPR", "胸外按壓", "救護車", "打119", "撥119", "叫119"]):
         return True
+    if has_remote_rescue_signal(text) and any(
+        term in text
+        for term in [
+            "迷路", "迷途", "受困", "失聯", "墜落", "摔落", "滑落",
+            "溪水暴漲", "落石", "坍方", "土石流", "失溫", "高山症",
+            "溺水", "不能走", "無法行走", "手機快沒電", "沒訊號",
+        ]
+    ):
+        return True
     weapon_terms = ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]
     has_weapon_negation = contains_negated(text, weapon_terms) or contains_uncertain(text, weapon_terms)
     return any([
@@ -163,7 +172,7 @@ def has_active_violence_emergency(text: str) -> bool:
     )
     if child_distress or neighbor_distress:
         return True
-    if any(keyword in text for keyword in ["打架", "闖入", "家暴", "被打", "虐待", "受虐", "打小孩", "打罵"]):
+    if any(keyword in text for keyword in ["打架", "闖入", "家暴", "被打", "虐待", "受虐", "打小孩", "打罵", "攻擊", "毆打"]):
         return True
     return has_contextual_pattern(text, VIOLENCE_HIGH_CONTEXT_PATTERNS)
 
@@ -234,6 +243,11 @@ def simple_risk(text: str):
         elif group_id == "civil_social":
             score = 0.35
 
+    if has_remote_rescue_signal(text):
+        score = max(score, 0.78)
+        if any(term in text for term in ["迷路", "受困", "失聯", "墜落", "摔落", "滑落", "溪水暴漲", "失溫", "高山症", "溺水", "手機快沒電", "沒訊號"]):
+            score = max(score, 0.86)
+
     v4_floor = v4_risk_floor(text, None)
     if v4_floor:
         score = max(score, v4_floor[0])
@@ -280,6 +294,11 @@ def apply_structured_risk_floor(
         elif group_id == "criminal":
             score = max(score, 0.55)
 
+    if has_remote_rescue_signal(text):
+        score = max(score, 0.78)
+        if any(term in text for term in ["迷路", "受困", "失聯", "墜落", "摔落", "滑落", "溪水暴漲", "失溫", "高山症", "溺水", "手機快沒電", "沒訊號"]):
+            score = max(score, 0.86)
+
     v4_floor = v4_risk_floor(text, ex.category)
     if v4_floor:
         score = max(score, v4_floor[0])
@@ -315,6 +334,8 @@ def apply_structured_risk_floor(
             score = max(score, 0.88)
         elif ex.weapon is True:
             score = max(score, 0.62)
+        elif ex.people_injured is True and ex.category == "暴力事件":
+            score = max(score, 0.86)
         elif ex.people_injured is True:
             score = max(score, 0.68)
 

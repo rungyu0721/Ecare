@@ -8,6 +8,25 @@ from pathlib import Path
 from typing import Any, Optional
 
 
+REMOTE_RESCUE_TERMS = [
+    "登山", "爬山", "山上", "山區", "山裡", "步道", "登山口", "山屋",
+    "國家公園", "森林遊樂區", "偏鄉", "部落", "產業道路", "林道",
+    "溪谷", "溪水", "溯溪", "瀑布", "野溪", "迷路", "迷途", "失聯",
+    "受困", "下切", "墜谷", "墜落", "摔落", "滑落", "落石", "坍方",
+    "土石流", "溪水暴漲", "手機快沒電", "沒訊號", "訊號不好",
+    "失溫", "高山症", "中暑", "脫水", "蛇咬", "蜂螫",
+]
+
+
+def has_remote_rescue_signal(text: str) -> bool:
+    normalized = text or ""
+    return any(term in normalized for term in REMOTE_RESCUE_TERMS)
+
+
+def is_remote_rescue_extracted(symptom_summary: Optional[str]) -> bool:
+    return bool(symptom_summary and "山域水域救援" in symptom_summary)
+
+
 @lru_cache(maxsize=1)
 def load_incident_taxonomy() -> dict[str, Any]:
     path = Path(__file__).parent.parent / "data" / "incident_taxonomy.json"
@@ -93,7 +112,8 @@ def match_incident_taxonomy(text: str) -> Optional[dict[str, Any]]:
 def taxonomy_prompt_summary() -> str:
     return """台灣事件分類與建議單位：
 - 刑事案件：暴力、竊盜、毒品、家暴、性侵、特殊刑案優先 110；詐欺/網路詐騙提醒 165，若有人身危險再 110；家暴、兒少、性侵可提醒 113。
-- 災害救護事件：火災、天然災害、緊急救護、交通事故、山域水域救援、危險物品事故優先 119；交通事故若需交通管制也可能需要 110。
+- 災害救護事件：火災、天然災害、緊急救護、交通事故、山域/水域救援、危險物品事故優先 119；交通事故若需交通管制也可能需要 110。
+- 偏鄉、山區、國家公園、步道、溪谷或林道情境：若有迷路、受困、失聯、摔落、無法行走、中暑、失溫、高山症、溺水、溪水暴漲、落石坍方或手機快沒電，通常引導撥打 119，並協助整理 GPS 座標、步道/地標、同行人數、傷勢、可否移動、手機電量與天候；若同時有暴力、犯罪、持刀、跟蹤、闖入或人身威脅，優先 110，受傷/受困時同步 119。
 - 醫療事件：若是立即生命危險或急症走 119；若是醫療疏失、病安、醫療糾紛，先確保病人安全並保存資料，洽院方、地方衛生局或申訴程序。
 - 民事/社會事件：民事、家事、少年、行政爭議通常不是緊急報案；若無立即危險，建議保存證據並洽法院、調解、法律諮詢或相關行政機關。
 分類時先判斷是否有「立即人身危險」。有立即危險時，安全與 110/119 優先；沒有立即危險時，給出保存證據與對應單位建議。"""

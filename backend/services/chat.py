@@ -47,7 +47,11 @@ from backend.services.llm import (
     llm_is_ready,
     parse_llm_json_text,
 )
-from backend.services.incident_taxonomy import taxonomy_prompt_summary
+from backend.services.incident_taxonomy import (
+    has_remote_rescue_signal,
+    is_remote_rescue_extracted,
+    taxonomy_prompt_summary,
+)
 from backend.services.incident_response_guides import match_incident_response_guides
 from backend.services.postprocess import (
     adapt_opening_turn_response,
@@ -103,6 +107,7 @@ def _build_natural_chat_prompt(
 - 先安撫並承接使用者剛剛說的內容。
 - 不要重複問已經回答過的問題。
 - 醫療急症：優先確認是否有反應、呼吸是否正常；無反應或呼吸異常時提醒立刻撥打 119。
+- 偏鄉/山區/國家公園/步道/溪谷救援：優先提醒 119，並確認 GPS 座標或步道地標、同行人數、傷勢/可否移動、手機電量與訊號。
 - 暴力/火災/交通事故：先提醒使用者保持安全距離，再問下一個最關鍵問題。
 - 回覆保持簡短清楚，通常 1 到 2 句即可。
 - 如果還需要資訊，只問下一個最重要的問題。
@@ -306,13 +311,21 @@ def _is_traffic_context(state: Extracted, messages: List[ChatMessage]) -> bool:
     return _has_any(text, ["車禍", "撞車", "擦撞", "追撞", "機車", "汽車", "被撞", "路口事故"])
 
 
+def _is_remote_rescue_context(state: Extracted, messages: List[ChatMessage]) -> bool:
+    return is_remote_rescue_extracted(state.symptom_summary) or has_remote_rescue_signal(
+        _joined_user_text(messages)
+    )
+
+
 def _apply_natural_turn_context(state: Extracted, messages: List[ChatMessage]) -> Extracted:
     latest_text = latest_user_text(messages)
     previous_assistant = _last_assistant_text(messages)
     if not latest_text:
         return state
 
-    if _is_violence_context(state, messages):
+    if _is_remote_rescue_context(state, messages):
+        state = _apply_remote_rescue_turn_context(state, latest_text, previous_assistant)
+    elif _is_violence_context(state, messages):
         state = _apply_violence_turn_context(state, latest_text, previous_assistant)
     elif _is_fire_context(state, messages):
         state = _apply_fire_turn_context(state, latest_text, previous_assistant)
@@ -478,6 +491,34 @@ def _apply_traffic_turn_context(
     return state
 
 
+def _apply_remote_rescue_turn_context(
+    state: Extracted,
+    latest_text: str,
+    previous_assistant: str,
+) -> Extracted:
+    if state.category in [None, "待確認"]:
+        state.category = "醫療急症"
+    if not is_remote_rescue_extracted(state.symptom_summary):
+        state.symptom_summary = (
+            f"{state.symptom_summary}、疑似山域水域救援"
+            if state.symptom_summary
+            else "疑似山域水域救援"
+        )
+
+    if _has_any(latest_text, ["受傷", "摔落", "滑落", "墜落", "墜谷", "骨折", "不能走", "無法走", "無法行走", "流血", "溺水", "失溫", "高山症", "中暑", "蛇咬", "蜂螫"]):
+        state.people_injured = True
+    if _has_any(latest_text, ["沒受傷", "沒有受傷", "無人受傷"]):
+        state.people_injured = False
+    if _has_any(latest_text, ["受困", "迷路", "迷途", "溪水暴漲", "坍方", "落石", "土石流", "失聯", "手機快沒電", "沒訊號"]):
+        state.danger_active = True
+    if _has_any(latest_text, ["已經下山", "已經脫困", "救援到了", "消防到了", "現在安全"]):
+        state.danger_active = False
+
+    if _has_any(previous_assistant, ["同行", "幾個人"]) and _is_positive_turn(latest_text):
+        state.people_injured = state.people_injured
+    return state
+
+
 def _violence_next_reply(state: Extracted) -> Optional[str]:
     if normalize_category_name(state.category) != "暴力事件":
         return None
@@ -517,6 +558,10 @@ def _child_protection_next_reply(state: Extracted, messages: List[ChatMessage]) 
 def _medical_next_reply(state: Extracted) -> Optional[str]:
     if normalize_category_name(state.category) != "醫療急症":
         return None
+    if is_remote_rescue_extracted(state.symptom_summary):
+        if state.conscious is False or state.breathing_difficulty is True:
+            return "這是高風險山域救援狀況，請立刻撥打 119，開擴音依照指示處理，並準備回報 GPS 座標、步道地標、同行人數和傷者狀況。"
+        return "這比較像山域或偏鄉救援情境，請優先撥打 119，並準備 GPS 座標、步道地標、同行人數、傷勢和手機電量。"
     if state.conscious is None:
         return "請先確認他是否有反應、叫得醒嗎？如果叫不醒，請立刻請旁邊的人協助撥打 119。"
     if state.breathing_difficulty is None:
