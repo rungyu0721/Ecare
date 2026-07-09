@@ -12,7 +12,7 @@
 
 - [x] 新增一鍵檢查腳本：`scripts/run_checks.ps1`
 - [x] 後端單元測試、v4 語意測試、v4 上下文測試、Flutter analyze 串成固定流程
-- [x] 將重要 demo 場景整理成固定測試資料（見 `docs/demo_scenarios.md` 與 `scripts/data/v4_semantic_cases.jsonl` 山域救援案例）
+- [x] 將重要 demo 場景整理成固定測試資料（見 `docs/demo_scenarios.md` 與 `scripts/data/v4_semantic_cases.jsonl`，涵蓋山域救援、天然災害、受困救援、自殺危機、失蹤走失）
 - [ ] 針對 latency 建立基準測試，追蹤 v4 回覆秒數
 
 ## P1：語音播報與通報狀態
@@ -71,7 +71,7 @@ Flutter -> FastAPI -> Local TTS service -> FastAPI -> Flutter
 
 - [ ] 人工審核 `scripts/data/v4_semantic_candidates*.jsonl`
 - [ ] 分批吸收通過審核的候選資料到 `backend/data/v4_semantic_lexicon.json`
-- [x] 將重要候選案例加入 `scripts/data/v4_semantic_cases.jsonl`（新增 9 筆確認案例）
+- [x] 將重要候選案例加入 `scripts/data/v4_semantic_cases.jsonl`（目前 85 筆語意回歸案例）
 - [x] 補強下列容易混淆情境：
   - 可疑人士 vs 醫療急症（「看起來怪怪的」不再誤判為可疑人士）
   - 噪音 vs 暴力事件（「吵架」改歸暴力事件；「打鬥聲」歸噪音）
@@ -84,8 +84,18 @@ Flutter -> FastAPI -> Local TTS service -> FastAPI -> Flutter
   - 溯溪溪水暴漲、溪谷受困
   - 失溫、中暑、高山症等山域常見急症
   - 山區/偏鄉不主動假設附近有 AED
-  - 110/119 分流：山域/醫療/消防偏 119，暴力/犯罪/人身威脅偏 110，混合情境同步提醒
-- [ ] 交通事故 vs 醫療急症 邊界補強（倒地流血仍常被判為醫療急症）
+  - 110/119 分流：山域水域救援、醫療、消防、天然災害、受困救援偏 119；暴力、犯罪、人身威脅、失蹤走失偏 110；自殺危機同步 119/110；混合情境同步提醒
+- [x] 新增並保護高風險新分類：
+  - 天然災害：地震、颱風、淹水、土石流、建築物倒塌、道路中斷
+  - 受困救援：電梯受困、困在電梯、電梯門打不開
+  - 自殺危機：自殺、跳樓、割腕、吞藥、燒炭、上吊
+  - 失蹤走失：市區老人走失、小孩失蹤、家人失聯
+  - OHCA / 中風 / 心肌梗塞字面詞歸醫療急症 High
+- [x] 補充分類混淆回歸測試：
+  - 市區走失 vs 山區/國家公園失聯
+  - 電梯受困 vs 電梯冒煙火災
+  - 自殺危機已離開危險位置但仍維持 High
+- [x] 交通事故 vs 醫療急症 邊界補強（車禍、受困、漏油、車道危險優先保留交通事故）
 - [ ] 否定句：沒受傷、沒有武器脈絡下的分類（context-dependent，需多輪追蹤）
 
 ## P2：通報流程產品化
@@ -99,6 +109,7 @@ Flutter -> FastAPI -> Local TTS service -> FastAPI -> Flutter
 - [x] 高風險提醒彈窗改成更明確的 E-CARE 通報流程（紅色 header、類型+風險 chips、位置、建議、語音提示）
 - [x] 加入「救援已抵達」、「情況緩和」、「我已安全」、「撤離完成」狀態按鈕（通報建立後顯示於事件面板）
 - [x] DB 記錄通報狀態歷程（`incident_status_log` 表 + `POST /reports/{id}/status`）
+- [x] 紀錄頁新增分類視覺與分類篩選（含天然災害、受困救援、自殺危機、失蹤走失）
 
 ## P2：急救知識資料化
 

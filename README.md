@@ -199,7 +199,7 @@ flutter run -d android --dart-define=API_BASE_URL=http://192.168.x.x:8000
 v4 語意與上下文回歸測試：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/test_v4_semantics.py
+.\.venv\Scripts\python.exe scripts/test_v4_semantics.py --risk-mode at_least
 .\.venv\Scripts\python.exe scripts/test_v4_context.py
 ```
 
@@ -218,10 +218,10 @@ flutter analyze
 
 目前已確認：
 
-- `pytest`: 77 passed
-- `scripts/test_v4_semantics.py`: 36/36 passed
+- `scripts/test_v4_semantics.py --risk-mode at_least`: 85/85 passed
+- `backend/tests/test_postprocess.py`: 25 passed
 - `scripts/test_v4_context.py`: 52/52 passed
-- `flutter analyze`: No issues found
+- `flutter analyze`: 最近一次在本機 Dart 工具逾時，需待工具恢復後重跑
 
 ## 主要 API
 
