@@ -245,7 +245,7 @@ def enrich_extracted_details(ex: Extracted, text: str) -> Extracted:
     if has_remote_rescue_signal(text):
         ex.symptom_summary = merge_symptom_summary(ex.symptom_summary, "疑似山域水域救援")
         if ex.category in [None, "待確認"]:
-            ex.category = "醫療急症"
+            ex.category = "山域水域救援"
 
     if has_minor_injury_signal(text):
         ex.people_injured = True
@@ -274,13 +274,26 @@ def simple_extract(text: str) -> Extracted:
         keyword in text and not contains_negated(text, [keyword]) and not contains_uncertain(text, [keyword])
         for keyword in VIOLENCE_SIGNAL_KEYWORDS
     )
+    has_explicit_violence_signal = any(
+        keyword in text and not contains_negated(text, [keyword]) and not contains_uncertain(text, [keyword])
+        for keyword in ["打架", "被打", "威脅", "砍", "家暴", "攻擊", "毆打", "要打", "要砍", "傷害"]
+    )
+    has_weapon_threat_context = (
+        any(keyword in text for keyword in ["拿刀", "持刀", "有刀", "拿槍", "持槍", "有槍", "有武器"])
+        and not any(keyword in text for keyword in ["割傷", "切到", "刀傷", "削到"])
+    )
     has_child_protection_signal = (
         any(k in text for k in ["家暴", "虐待", "受虐", "打小孩", "打罵", "摔東西", "砸東西"])
         or has_child_distress_signal(text)
     )
 
     v4_category = best_category_from_text(text)
-    if v4_category in ["交通事故", "可疑人士", "火災", "暴力事件"]:
+    if has_child_protection_signal or has_explicit_violence_signal or has_weapon_threat_context or (
+        has_aggressive_disturbance
+        and any(keyword in text for keyword in ["威脅", "逼近", "靠近", "要打", "要砍", "攻擊"])
+    ):
+        ex.category = "暴力事件"
+    elif v4_category in ["交通事故", "可疑人士", "火災", "暴力事件"]:
         ex.category = v4_category
     elif taxonomy_match and taxonomy_match.get("app_category"):
         ex.category = taxonomy_match["app_category"]
@@ -291,11 +304,6 @@ def simple_extract(text: str) -> Extracted:
         ex.category = v4_category
     elif any(k in text for k in ["火災", "失火", "著火", "起火", "冒煙", "濃煙", "煙很大", "燒起來"]):
         ex.category = "火災"
-    elif has_child_protection_signal or has_violence_signal or (
-        has_aggressive_disturbance
-        and any(keyword in text for keyword in ["威脅", "逼近", "靠近", "要打", "要砍", "攻擊"])
-    ):
-        ex.category = "暴力事件"
     elif has_suspicious_activity:
         ex.category = "可疑人士"
     elif has_disturbance:
@@ -314,8 +322,10 @@ def simple_extract(text: str) -> Extracted:
             "AED", "CPR", "胸外按壓", "救護車", "登山迷路", "爬山迷路",
             "山難", "山上迷路", "步道迷路", "國家公園迷路", "偏鄉受困",
             "林道受困", "山區受困", "受困", "失聯", "墜落", "摔落",
-            "滑落", "墜谷", "溪水暴漲", "溯溪", "溪谷", "失溫",
-            "高山症", "中暑", "脫水", "蛇咬", "蜂螫",
+            "滑落", "墜谷", "溪水暴漲", "溪水變大", "溪水變急", "水位上升",
+            "被水沖走", "被沖走", "沖走", "卡在對岸", "過不了溪", "過不了河",
+            "漂走", "水變深", "渡溪失敗", "溯溪", "溪谷", "失溫",
+            "高山症", "中暑", "熱衰竭", "脫水", "蛇咬", "蜂螫",
         ]
     ):
         ex.category = "醫療急症"
@@ -324,7 +334,7 @@ def simple_extract(text: str) -> Extracted:
     else:
         ex.category = "待確認"
 
-    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐", "噎到", "哽塞", "噎住", "臉發紫", "中暑", "熱衰竭", "癲癇", "失溫", "高山症", "脫水", "蛇咬", "蜂螫", "墜落", "摔落", "滑落", "墜谷", "不能走", "無法行走", "AED", "CPR", "胸外按壓", "救護車", "沒有在呼吸", "沒在呼吸"]
+    injury_terms = ["流血", "大量流血", "血流不停", "受傷", "燙傷", "燒傷", "灼傷", "燙到", "燒到", "水泡", "昏倒", "暈倒", "暈過去", "昏過去", "倒地", "倒下", "倒在地上", "倒在路邊", "沒反應", "沒有反應", "無反應", "叫不醒", "沒呼吸", "抽搐", "骨折", "頭暈", "胸痛", "胸悶", "心臟痛", "半邊無力", "嘴歪", "講話不清楚", "呼吸困難", "喘不過氣", "吸不到氣", "嘔吐", "噎到", "哽塞", "噎住", "臉發紫", "中暑", "熱衰竭", "癲癇", "失溫", "高山症", "脫水", "蛇咬", "蜂螫", "墜落", "摔落", "滑落", "墜谷", "被水沖走", "被沖走", "沖走", "不能走", "無法走", "無法行走", "走不動", "AED", "CPR", "胸外按壓", "救護車", "沒有在呼吸", "沒在呼吸"]
     if contains_negated(text, ["受傷", "流血", "昏倒", "呼吸困難", "嘔吐"]):
         ex.people_injured = False
     elif any(k in text for k in injury_terms):
@@ -339,7 +349,7 @@ def simple_extract(text: str) -> Extracted:
         ex.weapon = None
     else:
         ex.weapon = True if any(k in text for k in weapon_terms) else None
-    ex.danger_active = True if has_child_protection_signal or any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場", "追人", "追我", "揮刀", "攻擊", "毆打", "攻擊中", "迷路", "迷途", "受困", "失聯", "溪水暴漲", "坍方", "落石", "土石流", "手機快沒電", "沒訊號", "不能走", "無法走", "無法行走", "走不動"]) else None
+    ex.danger_active = True if has_child_protection_signal or any(k in text for k in ["還在", "持續", "正在", "還沒結束", "還在現場", "追人", "追我", "揮刀", "攻擊", "毆打", "攻擊中", "迷路", "迷途", "受困", "失聯", "溪水暴漲", "溪水變大", "溪水變急", "水位上升", "被水沖走", "被沖走", "沖走", "卡在對岸", "過不了溪", "過不了河", "漂走", "水變深", "渡溪失敗", "坍方", "落石", "土石流", "手機快沒電", "手機沒電", "快沒電", "電量不足", "剩一格電", "只剩一格電", "剩5%", "剩 5%", "剩不到10%", "剩不到 10%", "沒訊號", "沒有訊號", "訊號不好", "定位跑掉", "GPS不準", "GPS 不準", "找不到座標", "不知道座標", "沒有座標", "下大雨", "大雨", "起霧", "濃霧", "氣溫很低", "低溫", "很冷", "天黑", "天色變暗", "不能走", "無法走", "無法行走", "走不動"]) else None
     if has_child_unresponsive_signal(text):
         ex.conscious = False
         ex.people_injured = True
@@ -350,7 +360,7 @@ def simple_extract(text: str) -> Extracted:
     burn_advice = burn_dispatch_advice(text, ex)
     if burn_advice:
         ex.dispatch_advice = burn_advice
-    elif taxonomy_match and taxonomy_match.get("advice"):
+    elif taxonomy_match and taxonomy_match.get("advice") and ex.category == taxonomy_match.get("app_category"):
         ex.dispatch_advice = taxonomy_match["advice"]
     else:
         ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)

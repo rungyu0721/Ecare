@@ -37,11 +37,22 @@ MEDIUM_ALERT_KEYWORDS: set = set(_kw["medium_alert"])
 
 REMOTE_RESCUE_HIGH_TERMS = [
     "迷路", "迷途", "受困", "失聯", "墜落", "摔落", "滑落", "墜谷",
-    "溪水暴漲", "溪水變大", "溪水變急", "水位上升", "落石", "坍方", "土石流",
+    "溪水暴漲", "溪水變大", "溪水變急", "水位上升",
+    "被水沖走", "被沖走", "沖走", "卡在對岸", "過不了溪", "過不了河",
+    "漂走", "水變深", "渡溪失敗",
+    "落石", "坍方", "土石流",
     "失溫", "高山症", "中暑", "熱衰竭", "脫水", "溺水", "蛇咬", "蜂螫",
     "不能走", "無法走", "無法行走", "走不動",
-    "手機快沒電", "手機沒電", "快沒電", "電量不足",
+    "手機快沒電", "手機沒電", "快沒電", "電量不足", "剩一格電", "只剩一格電",
     "沒訊號", "沒有訊號",
+    "下大雨", "大雨", "起霧", "濃霧", "氣溫很低", "低溫", "很冷", "天黑", "天色變暗",
+]
+
+REMOTE_RESCUE_LOW_BATTERY_PATTERNS = [
+    re.compile(r"(手機|電量|電池).{0,6}剩.{0,3}([0-9]|10)\s*%"),
+    re.compile(r"剩\s*([0-9]|10)\s*%"),
+    re.compile(r"剩不到\s*10\s*%"),
+    re.compile(r"剩\s*(百分之)?[一二三四五六七八九十]\s*(%|趴|格電)?"),
 ]
 
 # ======================
@@ -144,6 +155,12 @@ def has_contextual_pattern(text: str, patterns: List[re.Pattern]) -> bool:
     return any(pattern.search(text) for pattern in patterns)
 
 
+def has_remote_rescue_high_risk_signal(text: str) -> bool:
+    return any(term in text for term in REMOTE_RESCUE_HIGH_TERMS) or has_contextual_pattern(
+        text, REMOTE_RESCUE_LOW_BATTERY_PATTERNS
+    )
+
+
 def has_high_risk_context_signal(text: str) -> bool:
     if has_child_unresponsive_signal(text):
         return True
@@ -152,9 +169,7 @@ def has_high_risk_context_signal(text: str) -> bool:
     # Emergency response actions (CPR/AED/calling 119/ambulance) imply an active high-risk event
     if any(term in text for term in ["AED", "CPR", "胸外按壓", "救護車", "打119", "撥119", "叫119"]):
         return True
-    if has_remote_rescue_signal(text) and any(
-        term in text for term in REMOTE_RESCUE_HIGH_TERMS
-    ):
+    if has_remote_rescue_signal(text) and has_remote_rescue_high_risk_signal(text):
         return True
     weapon_terms = ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]
     has_weapon_negation = contains_negated(text, weapon_terms) or contains_uncertain(text, weapon_terms)
@@ -249,7 +264,7 @@ def simple_risk(text: str):
 
     if has_remote_rescue_signal(text):
         score = max(score, 0.78)
-        if any(term in text for term in REMOTE_RESCUE_HIGH_TERMS):
+        if has_remote_rescue_high_risk_signal(text):
             score = max(score, 0.86)
 
     v4_floor = v4_risk_floor(text, None)
@@ -300,7 +315,7 @@ def apply_structured_risk_floor(
 
     if has_remote_rescue_signal(text):
         score = max(score, 0.78)
-        if any(term in text for term in REMOTE_RESCUE_HIGH_TERMS):
+        if has_remote_rescue_high_risk_signal(text):
             score = max(score, 0.86)
 
     v4_floor = v4_risk_floor(text, ex.category)

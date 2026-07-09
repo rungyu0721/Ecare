@@ -497,7 +497,7 @@ def _apply_remote_rescue_turn_context(
     previous_assistant: str,
 ) -> Extracted:
     if state.category in [None, "待確認"]:
-        state.category = "醫療急症"
+        state.category = "山域水域救援"
     if not is_remote_rescue_extracted(state.symptom_summary):
         state.symptom_summary = (
             f"{state.symptom_summary}、疑似山域水域救援"
@@ -505,11 +505,11 @@ def _apply_remote_rescue_turn_context(
             else "疑似山域水域救援"
         )
 
-    if _has_any(latest_text, ["受傷", "摔落", "滑落", "墜落", "墜谷", "骨折", "不能走", "無法走", "無法行走", "流血", "溺水", "失溫", "高山症", "中暑", "蛇咬", "蜂螫"]):
+    if _has_any(latest_text, ["受傷", "摔落", "滑落", "墜落", "墜谷", "骨折", "不能走", "無法走", "無法行走", "流血", "溺水", "被水沖走", "被沖走", "沖走", "失溫", "高山症", "中暑", "熱衰竭", "蛇咬", "蜂螫"]):
         state.people_injured = True
     if _has_any(latest_text, ["沒受傷", "沒有受傷", "無人受傷"]):
         state.people_injured = False
-    if _has_any(latest_text, ["受困", "迷路", "迷途", "溪水暴漲", "坍方", "落石", "土石流", "失聯", "手機快沒電", "沒訊號"]):
+    if _has_any(latest_text, ["受困", "迷路", "迷途", "溪水暴漲", "溪水變大", "溪水變急", "水位上升", "被水沖走", "被沖走", "沖走", "卡在對岸", "過不了溪", "過不了河", "漂走", "水變深", "渡溪失敗", "坍方", "落石", "土石流", "失聯", "手機快沒電", "手機沒電", "快沒電", "電量不足", "剩一格電", "只剩一格電", "剩5%", "剩 5%", "剩不到10%", "剩不到 10%", "沒訊號", "沒有訊號", "訊號不好", "定位跑掉", "GPS不準", "GPS 不準", "找不到座標", "不知道座標", "沒有座標", "下大雨", "大雨", "起霧", "濃霧", "氣溫很低", "低溫", "很冷", "天黑", "天色變暗"]):
         state.danger_active = True
     if _has_any(latest_text, ["已經下山", "已經脫困", "救援到了", "消防到了", "現在安全"]):
         state.danger_active = False
@@ -517,6 +517,14 @@ def _apply_remote_rescue_turn_context(
     if _has_any(previous_assistant, ["同行", "幾個人"]) and _is_positive_turn(latest_text):
         state.people_injured = state.people_injured
     return state
+
+
+def _remote_rescue_next_reply(state: Extracted) -> Optional[str]:
+    if normalize_category_name(state.category) != "山域水域救援" and not is_remote_rescue_extracted(state.symptom_summary):
+        return None
+    if state.conscious is False or state.breathing_difficulty is True:
+        return "這是高風險山域救援狀況，請立刻撥打 119，開擴音依照指示處理，並準備回報 GPS 座標、步道地標、同行人數和傷者狀況。"
+    return "這比較像山域或偏鄉救援情境，請優先撥打 119，並準備 GPS 座標、步道地標、同行人數、傷勢和手機電量。"
 
 
 def _violence_next_reply(state: Extracted) -> Optional[str]:
@@ -599,6 +607,7 @@ def _traffic_next_reply(state: Extracted) -> Optional[str]:
 
 def _category_flow_reply(state: Extracted) -> Optional[str]:
     for builder in [
+        _remote_rescue_next_reply,
         _violence_next_reply,
         _medical_next_reply,
         _fire_next_reply,
@@ -654,6 +663,10 @@ def _refine_natural_reply_for_context(
     if category == "暴力事件" and state.people_injured is False and asks_medical_followup:
         flow_reply = _violence_next_reply(state)
         if flow_reply:
+            return flow_reply
+    if category == "山域水域救援" or is_remote_rescue_extracted(state.symptom_summary):
+        flow_reply = _remote_rescue_next_reply(state)
+        if flow_reply and (_looks_repetitive(reply) or len(reply) > 220):
             return flow_reply
     if category == "醫療急症":
         flow_reply = _medical_next_reply(state)
