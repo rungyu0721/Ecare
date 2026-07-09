@@ -65,3 +65,6 @@
 {"id":"remote_swept_by_water","text":"朋友在溪谷被水沖走了","expected":{"category":"山域水域救援","risk_level":"High","people_injured":true,"danger_active":true}}
 {"id":"remote_bad_gps_weather","text":"國家公園裡定位跑掉，現在下大雨又起霧","expected":{"category":"山域水域救援","risk_level":"High","danger_active":true}}
 {"id":"remote_night_cold","text":"我們在山上迷路，天黑了而且氣溫很低","expected":{"category":"山域水域救援","risk_level":"High","danger_active":true}}
+{"id":"natural_earthquake_building_collapse","text":"地震後大樓倒塌，有人被壓住","expected":{"category":"天然災害","risk_level":"High","people_injured":true,"danger_active":true}}
+{"id":"natural_flood_trapped","text":"豪雨淹水，一樓有人受困出不來","expected":{"category":"天然災害","risk_level":"High","people_injured":true,"danger_active":true}}
+{"id":"natural_typhoon_road_blocked","text":"颱風停電，附近道路中斷","expected":{"category":"天然災害","risk_level":"High","danger_active":true}}

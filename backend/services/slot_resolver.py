@@ -166,6 +166,7 @@ _CATEGORY_SLOT_PRIORITY: Dict[str, List[str]] = {
     "暴力事件": ["weapon", "people_injured", "danger_active"],
     "醫療急症": ["conscious", "breathing_difficulty", "people_injured"],
     "山域水域救援": ["people_injured", "danger_active"],
+    "天然災害": ["danger_active", "people_injured"],
     "火災":     ["danger_active", "people_injured"],
     "交通事故": ["people_injured", "danger_active"],
     "可疑人士": ["danger_active"],

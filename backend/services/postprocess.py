@@ -520,7 +520,7 @@ def contextualize_reply_and_question(
             reply = f"收到，地點是在{ex.location}。"
         if next_question_is_generic or asks_about_location(next_q):
             if ex.category == "待確認":
-                next_q = "那現場現在是發生了什麼事？像是火災、衝突、車禍，還是有人身體不舒服？"
+                next_q = "那現場現在是發生了什麼事？像是火災、天然災害、衝突、車禍，還是有人身體不舒服？"
             else:
                 next_q = next_question(ex, risk_level)
 
@@ -544,7 +544,7 @@ def contextualize_reply_and_question(
         ex.category
         and ex.category != "待確認"
         and latest_user_text
-        and any(kw in previous_assistant_text for kw in ["火災", "可疑人士", "噪音", "醫療急症", "暴力事件", "交通事故"])
+        and any(kw in previous_assistant_text for kw in ["火災", "天然災害", "可疑人士", "噪音", "醫療急症", "暴力事件", "交通事故"])
         and reply_is_generic
     ):
         reply = f"了解，這看起來是{ex.category}。"

@@ -223,6 +223,13 @@ def determine_missing_slots(
             missing.append("是否有人受困或受傷")
         return missing
 
+    if category == "天然災害":
+        if ex.danger_active is None:
+            missing.append("災害危險是否持續")
+        if ex.people_injured is None:
+            missing.append("是否有人受困或受傷")
+        return missing
+
     if category == "交通事故":
         if ex.people_injured is None:
             missing.append("是否有人受傷")
@@ -413,6 +420,13 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
             return "現場有人受困、嗆傷，或需要救護車嗎？"
         return "起火點大概是在住家、室內空間、店面，還是車輛附近？"
 
+    if ex.category == "天然災害":
+        if ex.danger_active is None:
+            return "現場危險還在持續嗎？例如餘震、淹水、土石流、倒塌或道路中斷。"
+        if ex.people_injured is None:
+            return "現場有沒有人受困、被壓住、受傷，或需要救護車？"
+        return "災害地點是在住家、道路、橋梁、山坡地，還是溪流附近？"
+
     if ex.category == "暴力事件":
         if ex.weapon is None:
             return "現場對方有持刀、棍棒或其他武器嗎？"
@@ -472,7 +486,7 @@ def next_question_from_semantic(
     if has_high_urgency_audio_emotion(audio_context):
         if not location_known:
             return "你現在人在哪裡？請先告訴我地址、明顯地標，或附近路名。"
-        if ex.category in ["暴力事件", "可疑人士", "火災", "交通事故"] and ex.danger_active is None:
+        if ex.category in ["暴力事件", "可疑人士", "火災", "交通事故", "天然災害"] and ex.danger_active is None:
             return "你現在是否在安全位置？危險人物、火勢或事故還在現場嗎？"
         if semantic.entities.injured is None and ex.people_injured is None:
             return "現場有人受傷、流血，或需要立刻送醫嗎？"
@@ -490,7 +504,7 @@ def next_question_from_semantic(
             return default_question
         return next_question(ex, risk_level)
 
-    if ex.category in ["噪音", "可疑人士", "暴力事件", "火災", "交通事故"]:
+    if ex.category in ["噪音", "可疑人士", "暴力事件", "火災", "交通事故", "天然災害"]:
         # Always use the structured flow question so the LLM can't jump ahead
         # to end-of-flow questions while critical slots are still pending
         return next_question(ex, risk_level) or default_question

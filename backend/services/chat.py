@@ -108,6 +108,7 @@ def _build_natural_chat_prompt(
 - 不要重複問已經回答過的問題。
 - 醫療急症：優先確認是否有反應、呼吸是否正常；無反應或呼吸異常時提醒立刻撥打 119。
 - 偏鄉/山區/國家公園/步道/溪谷救援：優先提醒 119，並確認 GPS 座標或步道地標、同行人數、傷勢/可否移動、手機電量與訊號。
+- 天然災害：先提醒遠離倒塌、淹水、土石流等危險區域，再確認是否有人受困或受傷；有人受困/受傷優先 119。
 - 暴力/火災/交通事故：先提醒使用者保持安全距離，再問下一個最關鍵問題。
 - 回覆保持簡短清楚，通常 1 到 2 句即可。
 - 如果還需要資訊，只問下一個最重要的問題。
@@ -311,6 +312,20 @@ def _is_traffic_context(state: Extracted, messages: List[ChatMessage]) -> bool:
     return _has_any(text, ["車禍", "撞車", "擦撞", "追撞", "機車", "汽車", "被撞", "路口事故"])
 
 
+def _is_natural_disaster_context(state: Extracted, messages: List[ChatMessage]) -> bool:
+    if normalize_category_name(state.category) == "天然災害":
+        return True
+    text = _joined_user_text(messages)
+    return _has_any(
+        text,
+        [
+            "天然災害", "地震", "強震", "餘震", "颱風", "豪雨", "水災", "淹水", "積水",
+            "土石流", "坡地崩塌", "坍方", "建築物倒塌", "房屋倒塌", "大樓倒塌",
+            "牆倒塌", "橋斷", "道路中斷", "瓦礫", "被壓住", "有人被埋",
+        ],
+    )
+
+
 def _is_remote_rescue_context(state: Extracted, messages: List[ChatMessage]) -> bool:
     return is_remote_rescue_extracted(state.symptom_summary) or has_remote_rescue_signal(
         _joined_user_text(messages)
@@ -331,6 +346,8 @@ def _apply_natural_turn_context(state: Extracted, messages: List[ChatMessage]) -
         state = _apply_fire_turn_context(state, latest_text, previous_assistant)
     elif _is_traffic_context(state, messages):
         state = _apply_traffic_turn_context(state, latest_text, previous_assistant)
+    elif _is_natural_disaster_context(state, messages):
+        state = _apply_natural_disaster_turn_context(state, latest_text, previous_assistant)
     elif _is_medical_context(state, messages):
         state = _apply_medical_turn_context(state, latest_text, previous_assistant)
 
@@ -491,6 +508,45 @@ def _apply_traffic_turn_context(
     return state
 
 
+def _apply_natural_disaster_turn_context(
+    state: Extracted,
+    latest_text: str,
+    previous_assistant: str,
+) -> Extracted:
+    state.category = "天然災害"
+    asked_danger = _has_any(previous_assistant, ["還在", "持續", "危險", "倒塌", "淹水", "土石流", "坍方"])
+    asked_trapped = _has_any(previous_assistant, ["受困", "受傷", "被壓住", "被埋", "有人"])
+
+    danger_terms = [
+        "地震", "強震", "還在搖", "餘震", "淹水", "積水", "水位上升", "土石流",
+        "坡地崩塌", "坍方", "倒塌", "橋斷", "道路中斷", "瓦斯外洩", "停電",
+    ]
+    safe_terms = ["水退了", "已經撤離", "已經避難", "現在安全", "救援到了", "消防到了"]
+    trapped_or_injured_terms = [
+        "受困", "受傷", "流血", "倒地", "骨折", "被壓住", "有人被埋", "瓦礫壓住", "困在裡面", "出不來",
+    ]
+
+    if asked_danger or _has_any(latest_text, danger_terms):
+        if _has_any(latest_text, safe_terms):
+            state.danger_active = False
+        elif _has_any(latest_text, danger_terms):
+            state.danger_active = True
+        elif asked_danger and _is_negative_turn(latest_text):
+            state.danger_active = False
+        elif asked_danger and _is_positive_turn(latest_text):
+            state.danger_active = True
+
+    if asked_trapped or _has_any(latest_text, trapped_or_injured_terms):
+        if _is_negative_turn(latest_text):
+            state.people_injured = False
+        elif _has_any(latest_text, trapped_or_injured_terms):
+            state.people_injured = True
+        elif asked_trapped and _is_positive_turn(latest_text):
+            state.people_injured = True
+
+    return state
+
+
 def _apply_remote_rescue_turn_context(
     state: Extracted,
     latest_text: str,
@@ -605,6 +661,18 @@ def _traffic_next_reply(state: Extracted) -> Optional[str]:
     return "了解，目前沒有人受傷且沒有明顯二次事故風險。請仍記錄位置與車況，必要時通知警方協助。"
 
 
+def _natural_disaster_next_reply(state: Extracted) -> Optional[str]:
+    if normalize_category_name(state.category) != "天然災害":
+        return None
+    if state.danger_active is None:
+        return "請先遠離倒塌、淹水、土石流或瓦斯味等危險區域。現場危險還在持續嗎？"
+    if state.people_injured is None:
+        return "現場有沒有人受困、被壓住、受傷，或需要救護車？"
+    if state.danger_active or state.people_injured:
+        return "請優先撥打 119，告知災害類型、位置、是否有人受困或受傷；如果也有人身威脅，再同步通報 110。"
+    return "了解，目前看起來已經離開主要危險。請仍保持警覺，留在安全處並依地方災害應變或消防指示行動。"
+
+
 def _category_flow_reply(state: Extracted) -> Optional[str]:
     for builder in [
         _remote_rescue_next_reply,
@@ -612,6 +680,7 @@ def _category_flow_reply(state: Extracted) -> Optional[str]:
         _medical_next_reply,
         _fire_next_reply,
         _traffic_next_reply,
+        _natural_disaster_next_reply,
     ]:
         reply = builder(state)
         if reply:
@@ -1167,6 +1236,7 @@ def _build_voice_fields(
         (ex.category == "醫療急症" and (ex.conscious is False or ex.breathing_difficulty is True))
         or (ex.category in ["暴力事件", "可疑人士"] and ex.weapon is True)
         or (ex.category == "火災" and ex.danger_active is True)
+        or (ex.category == "天然災害" and (ex.danger_active is True or ex.people_injured is True))
     )
     should_speak = bool(should_escalate or risk_level == "High" or is_immediate)
     if not should_speak:
@@ -1188,6 +1258,9 @@ def _build_voice_fields(
             priority = "high"
     elif cat == "火災":
         prompt = "我在，請現在就離開，遠離濃煙，彎低身體移動，不要搭電梯。"
+        priority = "high"
+    elif cat == "天然災害":
+        prompt = "我在，請先離開倒塌、淹水或土石流危險區，保持手機可接通。"
         priority = "high"
     elif cat in ["暴力事件", "可疑人士"]:
         if ex.weapon is True:
