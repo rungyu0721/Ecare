@@ -147,6 +147,28 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _sendDemoScenario(_DemoScenario scenario) async {
+    if (_isSending || _isRecording || _isProcessingAudio) {
+      return;
+    }
+
+    await _sendMessage(
+      backendText: scenario.message,
+      timelineItem: _ChatTimelineItem.text(
+        role: 'user',
+        content: scenario.message,
+      ),
+    );
+  }
+
+  bool _shouldShowDemoScenarios() {
+    return _latestResponse == null &&
+        _timeline.length == 1 &&
+        !_isSending &&
+        !_isRecording &&
+        !_isProcessingAudio;
+  }
+
   String _inputHintText() {
     final response = _latestResponse;
     if (response == null) {
@@ -1503,6 +1525,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final voiceStatusText = _voiceStatusText();
     final incidentStatusPills = _incidentStatusPills();
     final quickReplyActions = _quickReplyActions();
+    final showDemoScenarios = _shouldShowDemoScenarios();
 
     return Scaffold(
       backgroundColor: EcareApp.background,
@@ -1727,6 +1750,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
+                      if (showDemoScenarios) ...<Widget>[
+                        _DemoScenarioBar(
+                          scenarios: _demoScenarios,
+                          onSelected: _sendDemoScenario,
+                        ),
+                        const SizedBox(height: 10),
+                      ],
                       if (quickReplyActions.isNotEmpty &&
                           !_isRecording &&
                           !_isProcessingAudio) ...<Widget>[
@@ -2001,6 +2031,53 @@ class _QuickReplyAction {
   final IconData icon;
   final String text;
 }
+
+class _DemoScenario {
+  const _DemoScenario({
+    required this.icon,
+    required this.label,
+    required this.tag,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String label;
+  final String tag;
+  final String message;
+}
+
+const List<_DemoScenario> _demoScenarios = <_DemoScenario>[
+  _DemoScenario(
+    icon: Icons.terrain_outlined,
+    label: '山區迷路',
+    tag: '119',
+    message: '我朋友在山區步道迷路了，天快黑，手機剩不到 10%，也沒有訊號。',
+  ),
+  _DemoScenario(
+    icon: Icons.apartment_outlined,
+    label: '電梯受困',
+    tag: '119',
+    message: '我們困在電梯裡，門打不開，有一位老人覺得喘不過氣。',
+  ),
+  _DemoScenario(
+    icon: Icons.warning_amber_rounded,
+    label: '地震倒塌',
+    tag: '119',
+    message: '剛剛地震後旁邊大樓倒塌，有人被壓住，現場還有瓦斯味。',
+  ),
+  _DemoScenario(
+    icon: Icons.support_agent_outlined,
+    label: '跳樓危機',
+    tag: '119/110',
+    message: '有人站在頂樓邊緣說不想活了，我不敢靠近，不知道怎麼辦。',
+  ),
+  _DemoScenario(
+    icon: Icons.person_search_outlined,
+    label: '長輩走失',
+    tag: '110',
+    message: '我阿嬤在市場附近走失，已經兩小時聯絡不上，她有失智症。',
+  ),
+];
 
 class _IncidentSnapshotPanel extends StatefulWidget {
   const _IncidentSnapshotPanel({
@@ -2400,6 +2477,75 @@ class _QuickReplyBar extends StatelessWidget {
                       color: EcareApp.text,
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+  }
+}
+
+class _DemoScenarioBar extends StatelessWidget {
+  const _DemoScenarioBar({
+    required this.scenarios,
+    required this.onSelected,
+  });
+
+  final List<_DemoScenario> scenarios;
+  final ValueChanged<_DemoScenario> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: scenarios
+              .map(
+                (scenario) => Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ActionChip(
+                    avatar: Icon(scenario.icon, size: 16),
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(scenario.label),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.72),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            scenario.tag,
+                            style: const TextStyle(
+                              color: EcareApp.primaryDark,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    onPressed: () => onSelected(scenario),
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: const Color(0xFFEFF7F5),
+                    side: const BorderSide(color: Color(0xFFC8DDD7)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    labelStyle: const TextStyle(
+                      color: EcareApp.text,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
