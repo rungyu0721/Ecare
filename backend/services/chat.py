@@ -105,6 +105,8 @@ def _build_natural_chat_prompt(
 
 回覆原則：
 - 先安撫並承接使用者剛剛說的內容。
+- 同理心要具體承接事件，例如找不到人、受困、看到火煙、有人不舒服；不要只泛泛說「我了解」。
+- 語氣要穩定、短、可執行，不要責備、催促或像表單。
 - 不要重複問已經回答過的問題。
 - 醫療急症：優先確認是否有反應、呼吸是否正常；無反應或呼吸異常時提醒立刻撥打 119。
 - 偏鄉/山區/國家公園/步道/溪谷救援：優先提醒 119，並確認 GPS 座標或步道地標、同行人數、傷勢/可否移動、手機電量與訊號。
@@ -831,6 +833,44 @@ def _category_flow_reply(state: Extracted) -> Optional[str]:
         if reply:
             return reply
     return None
+
+
+def _fallback_reply_for_state(ex: Extracted, risk_level: str) -> str:
+    category = normalize_category_name(ex.category)
+
+    if category == "待確認":
+        if risk_level == "High":
+            return "我在，先把眼前最急的事抓出來。"
+        return "我在，先慢慢來，我會陪你把狀況整理清楚。"
+
+    if category == "山域水域救援":
+        return "我知道這種受困或失聯情況會很慌，我們先把位置和救援重點整理清楚。"
+    if category == "自殺危機":
+        return "我在，這是需要立刻有人陪同處理的狀況，我們先確保現場安全。"
+    if category == "失蹤走失":
+        return "我知道找不到人會很著急，我們先把最後位置和特徵整理清楚。"
+    if category == "受困救援":
+        return "我在，先不要勉強脫困，我們把位置和人員狀況整理清楚。"
+    if category == "天然災害":
+        return "我知道現場可能很混亂，先以安全位置和受困受傷狀況為優先。"
+    if category == "火災":
+        return "我在，先離開火煙危險處，我們再確認有沒有人受困或受傷。"
+    if category == "醫療急症":
+        return "我在，我們先確認最重要的生命徵象。"
+    if category == "暴力事件":
+        return "我在，先不要靠近或介入，我們以你的安全為優先。"
+    if category == "交通事故":
+        return "我在，先避開車道和二次事故風險，再確認有沒有人受傷。"
+    if category == "可疑人士":
+        return "我知道這會讓人不安，先保持距離，我們確認對方是否仍在附近。"
+    if category == "噪音":
+        return "我知道持續吵鬧會讓人緊繃，我們先確認是否已經變成威脅。"
+
+    if risk_level == "High":
+        return "我在，先確認安全和位置，我會一步一步陪你整理。"
+    if risk_level == "Medium":
+        return "我在，我們先把目前最重要的資訊整理清楚。"
+    return "我在，先慢慢來，我會協助你把事情講清楚。"
 
 
 def _refine_natural_reply_for_context(
@@ -1604,12 +1644,7 @@ def process_chat_request(
             ),
             extracted=ex,
         )
-        if level == "High":
-            reply = "我了解你現在很緊張，我會快速協助你整理資訊並引導你進行通報。"
-        elif level == "Medium":
-            reply = "我了解你的狀況，我會一步步協助你整理必要資訊。"
-        else:
-            reply = "我在這裡，我會協助你把事情講清楚。"
+        reply = _fallback_reply_for_state(ex, level)
 
         nq = next_question_from_semantic(next_question(ex, level), semantic, ex, level,
                                          audio_context, messages=messages)

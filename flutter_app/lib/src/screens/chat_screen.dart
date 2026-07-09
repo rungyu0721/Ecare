@@ -26,7 +26,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   static const String _assistantGreeting =
-      '您好，我是 E-CARE 偏鄉與山區救援助理。請直接說明目前狀況、位置或附近地標，我會一步步協助您整理給 119/110 的重點。';
+      '您好，我是 E-CARE 救援助理。我在這裡陪您整理狀況；請直接說目前發生什麼事、位置或附近地標，我會一步步協助整理給 119/110 的重點。';
 
   final ApiService _apiService = ApiService();
   final AudioService _audioService = AudioService();

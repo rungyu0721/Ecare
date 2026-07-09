@@ -75,11 +75,11 @@ def test_pending_confirmation_asks_incident_after_location():
 
 
 @pytest.mark.parametrize(
-    ("text", "expected_category", "expected_level", "expected_terms"),
+    ("text", "expected_category", "expected_level", "expected_terms", "reply_terms"),
     [
-        ("有人在頂樓說要跳樓", "自殺危機", "High", ["119", "110"]),
-        ("朋友在山區走失，手機快沒電也沒訊號", "山域水域救援", "High", ["119"]),
-        ("地震後大樓倒塌有人被壓住", "天然災害", "High", ["119"]),
+        ("有人在頂樓說要跳樓", "自殺危機", "High", ["119", "110"], ["我在", "安全"]),
+        ("朋友在山區走失，手機快沒電也沒訊號", "山域水域救援", "High", ["119"], ["救援"]),
+        ("地震後大樓倒塌有人被壓住", "天然災害", "High", ["119"], ["混亂", "安全"]),
     ],
 )
 def test_process_chat_request_fallback_routes_high_risk_cases(
@@ -87,12 +87,15 @@ def test_process_chat_request_fallback_routes_high_risk_cases(
     expected_category,
     expected_level,
     expected_terms,
+    reply_terms,
 ):
     response = process_chat_request([ChatMessage(role="user", content=text)])
 
     assert response.extracted.category == expected_category
     assert response.risk_level == expected_level
     assert response.should_escalate is True
+    for term in reply_terms:
+        assert term in response.reply
     assert response.extracted.dispatch_advice
     for term in expected_terms:
         assert term in response.extracted.dispatch_advice
@@ -106,4 +109,5 @@ def test_process_chat_request_pending_confirmation_keeps_location_question():
     assert response.should_escalate is False
     assert response.extracted.location is None
     assert response.extracted.dispatch_advice == "建議派遣：待確認"
+    assert "我在" in response.reply
     assert response.next_question == "請問事發地點在哪裡？"
