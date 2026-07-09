@@ -79,7 +79,7 @@ def test_pending_confirmation_asks_incident_after_location():
     [
         ("有人在頂樓說要跳樓", "自殺危機", "High", ["119", "110"], ["我在", "安全"]),
         ("朋友在山區走失，手機快沒電也沒訊號", "山域水域救援", "High", ["119"], ["救援"]),
-        ("地震後大樓倒塌有人被壓住", "天然災害", "High", ["119"], ["混亂", "安全"]),
+        ("地震後大樓倒塌有人被壓住", "天然災害", "High", ["119"], ["受困", "安全"]),
     ],
 )
 def test_process_chat_request_fallback_routes_high_risk_cases(

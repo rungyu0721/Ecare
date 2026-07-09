@@ -186,3 +186,66 @@ def test_aed_arrived_context_goes_to_aed_guidance():
     assert "AED 已經到現場" in reply
     assert "打開 AED" in next_q
     assert "電擊" in next_q
+
+
+def test_fire_followup_updates_active_smoke_state():
+    messages = [
+        ChatMessage(role="assistant", content="火勢或濃煙現在還在持續嗎？"),
+        ChatMessage(role="user", content="還有濃煙，有人吸到煙不舒服"),
+    ]
+    ex = Extracted(category="火災", location="台北車站")
+
+    reply, next_q = contextualize_reply_and_question(
+        messages,
+        ex,
+        "我會協助你整理資訊。",
+        "請補充現場狀況。",
+        "High",
+    )
+
+    assert ex.danger_active is True
+    assert ex.people_injured is True
+    assert "火災現場有人受困或不適" in reply
+    assert ex.dispatch_advice
+    assert next_q
+
+
+def test_violence_followup_updates_gone_state():
+    messages = [
+        ChatMessage(role="assistant", content="對方現在還在現場，或還在持續威脅嗎？"),
+        ChatMessage(role="user", content="對方已經離開了"),
+    ]
+    ex = Extracted(category="暴力事件", weapon=False, people_injured=False)
+
+    reply, next_q = contextualize_reply_and_question(
+        messages,
+        ex,
+        "我會協助你整理資訊。",
+        "請補充現場狀況。",
+        "Medium",
+    )
+
+    assert ex.danger_active is False
+    assert "已經離開或停止" in reply
+    assert next_q
+
+
+def test_traffic_followup_updates_injury_state():
+    messages = [
+        ChatMessage(role="assistant", content="現場有沒有人受傷或被困在車內？"),
+        ChatMessage(role="user", content="有人受傷流血，需要救護車"),
+    ]
+    ex = Extracted(category="交通事故", location="忠孝東路路口")
+
+    reply, next_q = contextualize_reply_and_question(
+        messages,
+        ex,
+        "我會協助你整理資訊。",
+        "請補充現場狀況。",
+        "High",
+    )
+
+    assert ex.people_injured is True
+    assert "事故現場有人受傷或受困" in reply
+    assert ex.dispatch_advice
+    assert next_q
