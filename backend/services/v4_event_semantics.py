@@ -301,7 +301,7 @@ def apply_v4_slot_hints(text: str, ex: Extracted) -> Extracted:
             ex.breathing_difficulty = False
 
     if contains_any(text, rule.get("lower_terms", [])):
-        if ex.category in ["暴力事件", "可疑人士", "噪音", "火災", "交通事故"]:
+        if ex.category in ["暴力事件", "可疑人士", "噪音", "火災", "交通事故", "山域水域救援"]:
             ex.danger_active = False
 
     return ex

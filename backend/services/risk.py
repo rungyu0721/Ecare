@@ -35,6 +35,15 @@ MINOR_INJURY_KEYWORDS: set = set(_kw["minor_injury"])
 DIRECT_HIGH_RISK_PHRASES: set = set(_kw["direct_high_risk"])
 MEDIUM_ALERT_KEYWORDS: set = set(_kw["medium_alert"])
 
+REMOTE_RESCUE_HIGH_TERMS = [
+    "迷路", "迷途", "受困", "失聯", "墜落", "摔落", "滑落", "墜谷",
+    "溪水暴漲", "溪水變大", "溪水變急", "水位上升", "落石", "坍方", "土石流",
+    "失溫", "高山症", "中暑", "熱衰竭", "脫水", "溺水", "蛇咬", "蜂螫",
+    "不能走", "無法走", "無法行走", "走不動",
+    "手機快沒電", "手機沒電", "快沒電", "電量不足",
+    "沒訊號", "沒有訊號",
+]
+
 # ======================
 # 風險訊號正規表達式
 # ======================
@@ -144,12 +153,7 @@ def has_high_risk_context_signal(text: str) -> bool:
     if any(term in text for term in ["AED", "CPR", "胸外按壓", "救護車", "打119", "撥119", "叫119"]):
         return True
     if has_remote_rescue_signal(text) and any(
-        term in text
-        for term in [
-            "迷路", "迷途", "受困", "失聯", "墜落", "摔落", "滑落",
-            "溪水暴漲", "落石", "坍方", "土石流", "失溫", "高山症",
-            "溺水", "不能走", "無法行走", "手機快沒電", "沒訊號",
-        ]
+        term in text for term in REMOTE_RESCUE_HIGH_TERMS
     ):
         return True
     weapon_terms = ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]
@@ -245,7 +249,7 @@ def simple_risk(text: str):
 
     if has_remote_rescue_signal(text):
         score = max(score, 0.78)
-        if any(term in text for term in ["迷路", "受困", "失聯", "墜落", "摔落", "滑落", "溪水暴漲", "失溫", "高山症", "溺水", "手機快沒電", "沒訊號"]):
+        if any(term in text for term in REMOTE_RESCUE_HIGH_TERMS):
             score = max(score, 0.86)
 
     v4_floor = v4_risk_floor(text, None)
@@ -296,7 +300,7 @@ def apply_structured_risk_floor(
 
     if has_remote_rescue_signal(text):
         score = max(score, 0.78)
-        if any(term in text for term in ["迷路", "受困", "失聯", "墜落", "摔落", "滑落", "溪水暴漲", "失溫", "高山症", "溺水", "手機快沒電", "沒訊號"]):
+        if any(term in text for term in REMOTE_RESCUE_HIGH_TERMS):
             score = max(score, 0.86)
 
     v4_floor = v4_risk_floor(text, ex.category)
