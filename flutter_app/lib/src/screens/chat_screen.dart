@@ -868,8 +868,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final category = response.extracted.category ?? '';
     final isHighRisk = response.riskLevel == 'High' || response.shouldEscalate;
     final isMedical = category.contains('\u91ab\u7642');
-    final isRemoteRescue =
-        category.contains('山域') || category.contains('水域');
+    final isRemoteRescue = category.contains('山域') || category.contains('水域');
     final isNaturalDisaster = category.contains('天然災害');
     final isTrappedRescue = category.contains('受困救援');
     final isSelfHarm = category.contains('自殺危機');
