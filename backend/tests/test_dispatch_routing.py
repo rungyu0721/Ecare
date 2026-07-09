@@ -2,10 +2,11 @@
 
 import pytest
 
+from backend.models import ChatMessage, Extracted
+from backend.services.chat import process_chat_request
+from backend.services.dialogue import next_question
 from backend.services.extraction.classify import get_dispatch_advice
 from backend.services.extraction.entities import simple_extract
-from backend.models import Extracted
-from backend.services.dialogue import next_question
 
 
 @pytest.mark.parametrize(
@@ -71,3 +72,38 @@ def test_pending_confirmation_asks_incident_after_location():
     extracted = Extracted(category="待確認", location="台北車站")
 
     assert "請直接告訴我現在發生什麼事" in next_question(extracted, "Low")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_category", "expected_level", "expected_terms"),
+    [
+        ("有人在頂樓說要跳樓", "自殺危機", "High", ["119", "110"]),
+        ("朋友在山區走失，手機快沒電也沒訊號", "山域水域救援", "High", ["119"]),
+        ("地震後大樓倒塌有人被壓住", "天然災害", "High", ["119"]),
+    ],
+)
+def test_process_chat_request_fallback_routes_high_risk_cases(
+    text,
+    expected_category,
+    expected_level,
+    expected_terms,
+):
+    response = process_chat_request([ChatMessage(role="user", content=text)])
+
+    assert response.extracted.category == expected_category
+    assert response.risk_level == expected_level
+    assert response.should_escalate is True
+    assert response.extracted.dispatch_advice
+    for term in expected_terms:
+        assert term in response.extracted.dispatch_advice
+
+
+def test_process_chat_request_pending_confirmation_keeps_location_question():
+    response = process_chat_request([ChatMessage(role="user", content="我不知道怎麼辦")])
+
+    assert response.extracted.category == "待確認"
+    assert response.risk_level == "Low"
+    assert response.should_escalate is False
+    assert response.extracted.location is None
+    assert response.extracted.dispatch_advice == "建議派遣：待確認"
+    assert response.next_question == "請問事發地點在哪裡？"

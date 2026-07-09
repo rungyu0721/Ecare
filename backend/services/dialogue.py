@@ -24,6 +24,7 @@ from backend.services.extraction import (
     normalize_location_candidate,
     should_ask_scene_danger,
 )
+from backend.services.extraction.location import has_strong_location_signal
 from backend.services.incident_taxonomy import is_remote_rescue_extracted
 from backend.services.risk import has_high_risk_context_signal
 
@@ -161,7 +162,7 @@ def has_known_location_context(
     # 4. 對話歷史中使用者曾提到具體地址詞彙
     if messages:
         all_user_text = " ".join(m.content for m in messages if m.role == "user")
-        if re.search(r'[路街道巷弄號樓縣市區鄉鎮村里站場]', all_user_text):
+        if has_strong_location_signal(all_user_text):
             return True
         # 常見地標關鍵字
         if any(kw in all_user_text for kw in [

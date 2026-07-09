@@ -922,9 +922,9 @@ def adapt_opening_turn_response(
         else:
             reply = "你好，我在這裡。"
 
-        if semantic.primary_need == "開始描述狀況":
+        if not asks_about_location(next_q) and semantic.primary_need == "開始描述狀況":
             next_q = "請直接告訴我現在發生什麼事，或你看到、聽到什麼狀況。"
-        elif not next_q:
+        elif not asks_about_location(next_q) and not next_q:
             next_q = "你可以直接說現在發生什麼事，我會幫你整理重點。"
 
     return reply, next_q
