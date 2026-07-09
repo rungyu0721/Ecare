@@ -65,6 +65,26 @@ NATURAL_DISASTER_MEDIUM_TERMS = [
     "颱風", "豪雨", "大雨", "水災", "淹水", "積水", "餘震", "停電",
 ]
 
+TRAPPED_RESCUE_HIGH_TERMS = [
+    "電梯受困", "困在電梯", "卡在電梯", "電梯卡住", "電梯故障",
+    "電梯停住", "電梯打不開", "出不了電梯", "出不來電梯",
+]
+
+SELF_HARM_HIGH_TERMS = [
+    "自殺", "想死", "不想活", "輕生", "尋短", "跳樓", "要跳樓", "準備跳樓",
+    "站在頂樓", "站在陽台外", "割腕", "吞藥", "吃藥自殺", "燒炭", "上吊",
+]
+
+MISSING_PERSON_HIGH_TERMS = [
+    "小孩失蹤", "小孩走失", "老人走失", "失智走失", "夜間走失",
+    "很久沒回來", "手機關機", "疑似被帶走",
+]
+
+MISSING_PERSON_MEDIUM_TERMS = [
+    "失蹤", "走失", "失聯", "找不到人", "找不到小孩", "找不到老人",
+    "長輩走失", "家人失聯", "聯絡不上", "不見了",
+]
+
 # ======================
 # 風險訊號正規表達式
 # ======================
@@ -85,8 +105,10 @@ DISTURBANCE_CONTEXT_PATTERNS = [
 MEDICAL_HIGH_CONTEXT_PATTERNS = [
     re.compile(r"(呼吸困難|喘不過氣|吸不到氣|很喘).{0,8}(很嚴重|越來越嚴重|快不行|快不能呼吸|快沒氣|臉發紫|嘴唇發紫)"),
     re.compile(r"(叫不醒|失去意識|沒呼吸|沒有呼吸|沒反應|沒有反應|暈過去|昏過去).{0,6}(怎麼辦|快點|救命)?"),
+    re.compile(r"(OHCA|到院前心肺功能停止|心肺功能停止|心跳停止|心跳呼吸停止)"),
     re.compile(r"(胸痛|胸悶|心臟痛).{0,8}(冒冷汗|手麻|喘|喘不過氣|很痛|壓迫感)"),
-    re.compile(r"(半邊無力|嘴歪|講話不清楚|口齒不清|突然說不清楚)"),
+    re.compile(r"(中風|腦中風|疑似中風|半邊無力|嘴歪|講話不清楚|口齒不清|突然說不清楚)"),
+    re.compile(r"(心肌梗塞|心臟病發作)"),
     re.compile(r"(燙傷|燒傷|灼傷|燙到|燒到).{0,12}(嚴重|面積很大|大面積|很大一片|焦黑|發白|臉|手掌|關節|生殖器|化學|觸電)"),
     re.compile(r"(燙傷|燒傷|灼傷|燙到|燒到).{0,12}(?<!沒)(?<!沒有)(起水泡|有水泡|皮膚起水泡|水泡很大)"),
 ]
@@ -179,6 +201,22 @@ def has_natural_disaster_medium_signal(text: str) -> bool:
     return any(term in text for term in NATURAL_DISASTER_MEDIUM_TERMS)
 
 
+def has_trapped_rescue_high_signal(text: str) -> bool:
+    return any(term in text for term in TRAPPED_RESCUE_HIGH_TERMS)
+
+
+def has_self_harm_high_signal(text: str) -> bool:
+    return any(term in text for term in SELF_HARM_HIGH_TERMS)
+
+
+def has_missing_person_high_signal(text: str) -> bool:
+    return any(term in text for term in MISSING_PERSON_HIGH_TERMS)
+
+
+def has_missing_person_medium_signal(text: str) -> bool:
+    return any(term in text for term in MISSING_PERSON_MEDIUM_TERMS)
+
+
 def has_high_risk_context_signal(text: str) -> bool:
     if has_child_unresponsive_signal(text):
         return True
@@ -190,6 +228,8 @@ def has_high_risk_context_signal(text: str) -> bool:
     if has_remote_rescue_signal(text) and has_remote_rescue_high_risk_signal(text):
         return True
     if has_natural_disaster_high_signal(text):
+        return True
+    if has_trapped_rescue_high_signal(text) or has_self_harm_high_signal(text) or has_missing_person_high_signal(text):
         return True
     weapon_terms = ["刀", "槍", "武器", "棍棒", "球棒", "鐵棍"]
     has_weapon_negation = contains_negated(text, weapon_terms) or contains_uncertain(text, weapon_terms)
@@ -270,7 +310,7 @@ def simple_risk(text: str):
         subtype = taxonomy_match.get("subtype")
         if group_id == "fire_rescue":
             score = 0.78
-            if subtype in ["火災事故", "天然災害", "緊急救護", "交通事故", "山域水域救援", "危險物品事故"]:
+            if subtype in ["火災事故", "天然災害", "受困救援", "緊急救護", "自殺危機／跳樓通報", "交通事故", "山域水域救援", "危險物品事故"]:
                 score = 0.86
         elif group_id == "criminal":
             if subtype in ["暴力犯罪", "家庭暴力", "性侵害犯罪", "特殊刑案"]:
@@ -290,6 +330,15 @@ def simple_risk(text: str):
     if has_natural_disaster_high_signal(text):
         score = max(score, 0.88)
     elif has_natural_disaster_medium_signal(text):
+        score = max(score, 0.62)
+
+    if has_trapped_rescue_high_signal(text):
+        score = max(score, 0.86)
+    if has_self_harm_high_signal(text):
+        score = max(score, 0.9)
+    if has_missing_person_high_signal(text):
+        score = max(score, 0.82)
+    elif has_missing_person_medium_signal(text):
         score = max(score, 0.62)
 
     v4_floor = v4_risk_floor(text, None)
@@ -331,7 +380,7 @@ def apply_structured_risk_floor(
         subtype = taxonomy_match.get("subtype")
         if group_id == "fire_rescue":
             score = max(score, 0.78)
-            if subtype in ["火災事故", "天然災害", "緊急救護", "交通事故", "山域水域救援", "危險物品事故"]:
+            if subtype in ["火災事故", "天然災害", "受困救援", "緊急救護", "自殺危機／跳樓通報", "交通事故", "山域水域救援", "危險物品事故"]:
                 score = max(score, 0.86)
         elif group_id == "criminal" and subtype in ["暴力犯罪", "家庭暴力", "性侵害犯罪", "特殊刑案"]:
             score = max(score, 0.86)
@@ -346,6 +395,15 @@ def apply_structured_risk_floor(
     if has_natural_disaster_high_signal(text):
         score = max(score, 0.88)
     elif has_natural_disaster_medium_signal(text):
+        score = max(score, 0.62)
+
+    if has_trapped_rescue_high_signal(text):
+        score = max(score, 0.86)
+    if has_self_harm_high_signal(text):
+        score = max(score, 0.9)
+    if has_missing_person_high_signal(text):
+        score = max(score, 0.82)
+    elif has_missing_person_medium_signal(text):
         score = max(score, 0.62)
 
     v4_floor = v4_risk_floor(text, ex.category)

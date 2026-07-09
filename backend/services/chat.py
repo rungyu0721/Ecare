@@ -109,6 +109,7 @@ def _build_natural_chat_prompt(
 - 醫療急症：優先確認是否有反應、呼吸是否正常；無反應或呼吸異常時提醒立刻撥打 119。
 - 偏鄉/山區/國家公園/步道/溪谷救援：優先提醒 119，並確認 GPS 座標或步道地標、同行人數、傷勢/可否移動、手機電量與訊號。
 - 天然災害：先提醒遠離倒塌、淹水、土石流等危險區域，再確認是否有人受困或受傷；有人受困/受傷優先 119。
+- 受困救援/自殺危機/失蹤走失：優先確認位置與立即危險；電梯受困偏 119，自殺危機同步 119/110，失蹤走失偏 110。
 - 暴力/火災/交通事故：先提醒使用者保持安全距離，再問下一個最關鍵問題。
 - 回覆保持簡短清楚，通常 1 到 2 句即可。
 - 如果還需要資訊，只問下一個最重要的問題。
@@ -326,6 +327,27 @@ def _is_natural_disaster_context(state: Extracted, messages: List[ChatMessage]) 
     )
 
 
+def _is_trapped_rescue_context(state: Extracted, messages: List[ChatMessage]) -> bool:
+    if normalize_category_name(state.category) == "受困救援":
+        return True
+    text = _joined_user_text(messages)
+    return _has_any(text, ["電梯受困", "困在電梯", "卡在電梯", "電梯卡住", "電梯故障", "電梯打不開", "出不了電梯", "出不來電梯"])
+
+
+def _is_self_harm_context(state: Extracted, messages: List[ChatMessage]) -> bool:
+    if normalize_category_name(state.category) == "自殺危機":
+        return True
+    text = _joined_user_text(messages)
+    return _has_any(text, ["自殺", "想死", "不想活", "輕生", "尋短", "跳樓", "要跳樓", "準備跳樓", "站在頂樓", "站在陽台外", "割腕", "吞藥", "燒炭", "上吊"])
+
+
+def _is_missing_person_context(state: Extracted, messages: List[ChatMessage]) -> bool:
+    if normalize_category_name(state.category) == "失蹤走失":
+        return True
+    text = _joined_user_text(messages)
+    return _has_any(text, ["失蹤", "走失", "找不到人", "找不到小孩", "找不到老人", "老人走失", "小孩走失", "小孩失蹤", "長輩走失", "家人失聯", "聯絡不上", "不見了"])
+
+
 def _is_remote_rescue_context(state: Extracted, messages: List[ChatMessage]) -> bool:
     return is_remote_rescue_extracted(state.symptom_summary) or has_remote_rescue_signal(
         _joined_user_text(messages)
@@ -346,6 +368,12 @@ def _apply_natural_turn_context(state: Extracted, messages: List[ChatMessage]) -
         state = _apply_fire_turn_context(state, latest_text, previous_assistant)
     elif _is_traffic_context(state, messages):
         state = _apply_traffic_turn_context(state, latest_text, previous_assistant)
+    elif _is_trapped_rescue_context(state, messages):
+        state = _apply_trapped_rescue_turn_context(state, latest_text, previous_assistant)
+    elif _is_self_harm_context(state, messages):
+        state = _apply_self_harm_turn_context(state, latest_text, previous_assistant)
+    elif _is_missing_person_context(state, messages):
+        state = _apply_missing_person_turn_context(state, latest_text, previous_assistant)
     elif _is_natural_disaster_context(state, messages):
         state = _apply_natural_disaster_turn_context(state, latest_text, previous_assistant)
     elif _is_medical_context(state, messages):
@@ -547,6 +575,88 @@ def _apply_natural_disaster_turn_context(
     return state
 
 
+def _apply_trapped_rescue_turn_context(
+    state: Extracted,
+    latest_text: str,
+    previous_assistant: str,
+) -> Extracted:
+    state.category = "受困救援"
+    asked_injury = _has_any(previous_assistant, ["受傷", "不舒服", "呼吸", "昏倒", "老人", "小孩"])
+    asked_still_trapped = _has_any(previous_assistant, ["還在", "受困", "電梯", "出來", "打開"])
+
+    if asked_injury or _has_any(latest_text, ["受傷", "不舒服", "昏倒", "呼吸困難", "喘不過氣"]):
+        if _is_negative_turn(latest_text):
+            state.people_injured = False
+        elif _has_any(latest_text, ["受傷", "不舒服", "昏倒", "呼吸困難", "喘不過氣"]):
+            state.people_injured = True
+        elif asked_injury and _is_positive_turn(latest_text):
+            state.people_injured = True
+
+    if asked_still_trapped or _has_any(latest_text, ["電梯受困", "困在電梯", "卡在電梯", "電梯卡住", "電梯打不開", "出不來", "已經出來"]):
+        if _has_any(latest_text, ["已經出來", "電梯開了", "消防到了", "管理員到了", "現在安全"]):
+            state.danger_active = False
+        elif _has_any(latest_text, ["電梯受困", "困在電梯", "卡在電梯", "電梯卡住", "電梯打不開", "出不來"]):
+            state.danger_active = True
+        elif asked_still_trapped and _is_negative_turn(latest_text):
+            state.danger_active = False
+        elif asked_still_trapped and _is_positive_turn(latest_text):
+            state.danger_active = True
+
+    return state
+
+
+def _apply_self_harm_turn_context(
+    state: Extracted,
+    latest_text: str,
+    previous_assistant: str,
+) -> Extracted:
+    state.category = "自殺危機"
+    asked_active = _has_any(previous_assistant, ["危險位置", "頂樓", "陽台", "刀", "藥", "一個人", "現在"])
+    asked_injury = _has_any(previous_assistant, ["受傷", "流血", "吞藥", "割腕", "沒反應"])
+
+    if asked_active or _has_any(latest_text, ["要跳樓", "準備跳樓", "站在頂樓", "站在陽台外", "拿刀", "割腕", "吞藥", "燒炭", "上吊", "一個人"]):
+        if _has_any(latest_text, ["已經有人陪", "已經離開危險位置", "警察到了", "救護車到了", "現在安全"]):
+            state.danger_active = False
+        elif _has_any(latest_text, ["自殺", "想死", "要跳樓", "站在頂樓", "站在陽台外", "拿刀", "割腕", "吞藥", "燒炭", "上吊", "一個人"]):
+            state.danger_active = True
+        elif asked_active and _is_negative_turn(latest_text):
+            state.danger_active = False
+        elif asked_active and _is_positive_turn(latest_text):
+            state.danger_active = True
+
+    if asked_injury or _has_any(latest_text, ["割腕", "流血", "吞藥", "吃藥", "昏倒", "沒反應", "受傷"]):
+        if _is_negative_turn(latest_text):
+            state.people_injured = False
+        elif _has_any(latest_text, ["割腕", "流血", "吞藥", "吃藥", "昏倒", "沒反應", "受傷"]):
+            state.people_injured = True
+        elif asked_injury and _is_positive_turn(latest_text):
+            state.people_injured = True
+
+    return state
+
+
+def _apply_missing_person_turn_context(
+    state: Extracted,
+    latest_text: str,
+    previous_assistant: str,
+) -> Extracted:
+    state.category = "失蹤走失"
+    asked_found = _has_any(previous_assistant, ["找到", "聯絡", "最後", "還沒回來"])
+
+    if _has_any(latest_text, ["找到了", "回來了", "已經聯絡上", "警察到了", "現在安全"]):
+        state.danger_active = False
+    elif asked_found or _has_any(latest_text, ["失蹤", "走失", "失聯", "找不到", "聯絡不上", "不見了", "手機關機"]):
+        if _is_negative_turn(latest_text):
+            state.danger_active = False
+        else:
+            state.danger_active = True
+
+    if _has_any(latest_text, ["小孩", "幼兒", "老人", "長輩", "失智", "身心障礙", "需要服藥"]):
+        state.people_injured = True
+
+    return state
+
+
 def _apply_remote_rescue_turn_context(
     state: Extracted,
     latest_text: str,
@@ -673,6 +783,38 @@ def _natural_disaster_next_reply(state: Extracted) -> Optional[str]:
     return "了解，目前看起來已經離開主要危險。請仍保持警覺，留在安全處並依地方災害應變或消防指示行動。"
 
 
+def _trapped_rescue_next_reply(state: Extracted) -> Optional[str]:
+    if normalize_category_name(state.category) != "受困救援":
+        return None
+    if state.danger_active is None:
+        return "請不要強行開電梯門或攀爬。人現在還困在電梯裡嗎？"
+    if state.people_injured is None:
+        return "電梯裡有幾個人？有沒有人受傷、不舒服、呼吸困難，或有老人小孩孕婦？"
+    if state.danger_active or state.people_injured:
+        return "請撥打 119 或請管理員同步通知消防，告知地址、樓層、電梯編號與是否有人不適。"
+    return "了解，若已經脫困仍請確認人員狀況；若電梯異常未排除，請通知管理員或消防協助。"
+
+
+def _self_harm_next_reply(state: Extracted) -> Optional[str]:
+    if normalize_category_name(state.category) != "自殺危機":
+        return None
+    if state.danger_active is None:
+        return "請先不要刺激或拉扯對方，保持陪伴與安全距離。對方現在還在頂樓、陽台邊、持刀或已經吞藥嗎？"
+    if state.people_injured is None:
+        return "對方目前有受傷、流血、吞藥、昏倒或沒有反應嗎？"
+    return "這是高風險狀況，請立刻同步撥打 119 和 110，告知位置、樓層、現場危險物與對方目前狀態。"
+
+
+def _missing_person_next_reply(state: Extracted) -> Optional[str]:
+    if normalize_category_name(state.category) != "失蹤走失":
+        return None
+    if state.danger_active is None:
+        return "請先確認最後看到人的時間、地點與穿著。現在還聯絡不上或找不到人嗎？"
+    if state.people_injured is None:
+        return "走失的人是小孩、長輩、失智或需要服藥的人嗎？有沒有可能受傷或受困？"
+    return "建議盡快通報 110，提供最後出現地點、時間、穿著、照片與聯絡方式；若在山區水域或可能受困受傷，請同步 119。"
+
+
 def _category_flow_reply(state: Extracted) -> Optional[str]:
     for builder in [
         _remote_rescue_next_reply,
@@ -680,6 +822,9 @@ def _category_flow_reply(state: Extracted) -> Optional[str]:
         _medical_next_reply,
         _fire_next_reply,
         _traffic_next_reply,
+        _trapped_rescue_next_reply,
+        _self_harm_next_reply,
+        _missing_person_next_reply,
         _natural_disaster_next_reply,
     ]:
         reply = builder(state)
@@ -1237,6 +1382,7 @@ def _build_voice_fields(
         or (ex.category in ["暴力事件", "可疑人士"] and ex.weapon is True)
         or (ex.category == "火災" and ex.danger_active is True)
         or (ex.category == "天然災害" and (ex.danger_active is True or ex.people_injured is True))
+        or (ex.category in ["受困救援", "自殺危機"] and (ex.danger_active is True or ex.people_injured is True))
     )
     should_speak = bool(should_escalate or risk_level == "High" or is_immediate)
     if not should_speak:
@@ -1262,6 +1408,15 @@ def _build_voice_fields(
     elif cat == "天然災害":
         prompt = "我在，請先離開倒塌、淹水或土石流危險區，保持手機可接通。"
         priority = "high"
+    elif cat == "受困救援":
+        prompt = "我在，請不要強行開門或攀爬，保持通話，等待消防或管理員協助。"
+        priority = "high"
+    elif cat == "自殺危機":
+        prompt = "我在，請保持安全距離陪著對方，立刻同步撥打 119 和 110。"
+        priority = "high"
+    elif cat == "失蹤走失":
+        prompt = "我在，請先記下最後看到的時間、地點、穿著，並盡快通報警方。"
+        priority = "medium"
     elif cat in ["暴力事件", "可疑人士"]:
         if ex.weapon is True:
             prompt = "我在，請先離開現場，移到安全的地方，不要回頭。"

@@ -68,3 +68,12 @@
 {"id":"natural_earthquake_building_collapse","text":"地震後大樓倒塌，有人被壓住","expected":{"category":"天然災害","risk_level":"High","people_injured":true,"danger_active":true}}
 {"id":"natural_flood_trapped","text":"豪雨淹水，一樓有人受困出不來","expected":{"category":"天然災害","risk_level":"High","people_injured":true,"danger_active":true}}
 {"id":"natural_typhoon_road_blocked","text":"颱風停電，附近道路中斷","expected":{"category":"天然災害","risk_level":"High","danger_active":true}}
+{"id":"trapped_elevator","text":"有人電梯受困，門打不開","expected":{"category":"受困救援","risk_level":"High","danger_active":true}}
+{"id":"self_harm_jump","text":"有人站在頂樓說要跳樓","expected":{"category":"自殺危機","risk_level":"High","danger_active":true}}
+{"id":"self_harm_suicide","text":"他說想自殺，現在一個人在房間","expected":{"category":"自殺危機","risk_level":"High","danger_active":true}}
+{"id":"medical_ohca_literal","text":"OHCA患者，沒有呼吸也沒反應","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}
+{"id":"medical_cardiac_arrest_literal","text":"到院前心肺功能停止，需要CPR","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}
+{"id":"medical_stroke_literal","text":"疑似中風，嘴歪半邊無力","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}
+{"id":"medical_mi_literal","text":"心肌梗塞胸痛冒冷汗","expected":{"category":"醫療急症","risk_level":"High","people_injured":true}}
+{"id":"missing_elder","text":"老人走失找不到，聯絡不上","expected":{"category":"失蹤走失","risk_level":"High","danger_active":true}}
+{"id":"missing_child","text":"小孩失蹤了，最後在公園附近","expected":{"category":"失蹤走失","risk_level":"High","danger_active":true}}

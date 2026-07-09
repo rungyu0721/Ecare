@@ -148,7 +148,7 @@ def _load_v4_lexicon() -> Dict[str, object]:
     except (OSError, ValueError, json.JSONDecodeError):
         return {
             "version": "fallback",
-            "category_priority": ["交通事故", "火災", "山域水域救援", "天然災害", "暴力事件", "可疑人士", "醫療急症", "噪音"],
+            "category_priority": ["交通事故", "火災", "受困救援", "自殺危機", "山域水域救援", "天然災害", "暴力事件", "可疑人士", "失蹤走失", "醫療急症", "噪音"],
             "events": _FALLBACK_EVENT_RULES,
         }
 
@@ -157,7 +157,7 @@ V4_LEXICON = _load_v4_lexicon()
 V4_EVENT_RULES = V4_LEXICON["events"]
 V4_CATEGORY_PRIORITY = V4_LEXICON.get(
     "category_priority",
-    ["交通事故", "火災", "山域水域救援", "天然災害", "暴力事件", "可疑人士", "醫療急症", "噪音"],
+    ["交通事故", "火災", "受困救援", "自殺危機", "山域水域救援", "天然災害", "暴力事件", "可疑人士", "失蹤走失", "醫療急症", "噪音"],
 )
 
 
@@ -301,7 +301,7 @@ def apply_v4_slot_hints(text: str, ex: Extracted) -> Extracted:
             ex.breathing_difficulty = False
 
     if contains_any(text, rule.get("lower_terms", [])):
-        if ex.category in ["暴力事件", "可疑人士", "噪音", "火災", "交通事故", "山域水域救援", "天然災害"]:
+        if ex.category in ["暴力事件", "可疑人士", "噪音", "火災", "交通事故", "山域水域救援", "天然災害", "受困救援", "自殺危機", "失蹤走失"]:
             ex.danger_active = False
 
     return ex

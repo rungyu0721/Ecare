@@ -230,6 +230,27 @@ def determine_missing_slots(
             missing.append("是否有人受困或受傷")
         return missing
 
+    if category == "受困救援":
+        if ex.danger_active is None:
+            missing.append("是否仍受困")
+        if ex.people_injured is None:
+            missing.append("是否有人受傷或不適")
+        return missing
+
+    if category == "自殺危機":
+        if ex.danger_active is None:
+            missing.append("是否仍在危險位置或有危險物")
+        if ex.people_injured is None:
+            missing.append("是否已受傷、吞藥或無反應")
+        return missing
+
+    if category == "失蹤走失":
+        if ex.danger_active is None:
+            missing.append("是否仍失聯或找不到")
+        if ex.people_injured is None:
+            missing.append("走失者是否為高風險對象")
+        return missing
+
     if category == "交通事故":
         if ex.people_injured is None:
             missing.append("是否有人受傷")
@@ -427,6 +448,27 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
             return "現場有沒有人受困、被壓住、受傷，或需要救護車？"
         return "災害地點是在住家、道路、橋梁、山坡地，還是溪流附近？"
 
+    if ex.category == "受困救援":
+        if ex.danger_active is None:
+            return "人現在還困在電梯或受困空間裡嗎？請不要強行開門或攀爬。"
+        if ex.people_injured is None:
+            return "受困的人有沒有受傷、不舒服、呼吸困難，或有老人小孩孕婦？"
+        return "請提供地址、樓層、電梯編號或明顯地標，方便 119 或管理員定位。"
+
+    if ex.category == "自殺危機":
+        if ex.danger_active is None:
+            return "對方現在還在頂樓、陽台邊、持刀、已吞藥，或其他危險位置嗎？"
+        if ex.people_injured is None:
+            return "對方目前有受傷、流血、吞藥、昏倒或沒有反應嗎？"
+        return "請立刻同步撥打 119 和 110，告知位置、樓層與對方目前狀態。"
+
+    if ex.category == "失蹤走失":
+        if ex.danger_active is None:
+            return "現在還聯絡不上或找不到人嗎？最後看到人的時間和地點在哪裡？"
+        if ex.people_injured is None:
+            return "走失的人是小孩、長輩、失智或需要服藥的人嗎？"
+        return "建議盡快通報 110，準備照片、穿著、最後位置與聯絡方式；若在山區水域或可能受困受傷，同步 119。"
+
     if ex.category == "暴力事件":
         if ex.weapon is None:
             return "現場對方有持刀、棍棒或其他武器嗎？"
@@ -486,7 +528,7 @@ def next_question_from_semantic(
     if has_high_urgency_audio_emotion(audio_context):
         if not location_known:
             return "你現在人在哪裡？請先告訴我地址、明顯地標，或附近路名。"
-        if ex.category in ["暴力事件", "可疑人士", "火災", "交通事故", "天然災害"] and ex.danger_active is None:
+        if ex.category in ["暴力事件", "可疑人士", "火災", "交通事故", "天然災害", "受困救援", "自殺危機", "失蹤走失"] and ex.danger_active is None:
             return "你現在是否在安全位置？危險人物、火勢或事故還在現場嗎？"
         if semantic.entities.injured is None and ex.people_injured is None:
             return "現場有人受傷、流血，或需要立刻送醫嗎？"
@@ -504,7 +546,7 @@ def next_question_from_semantic(
             return default_question
         return next_question(ex, risk_level)
 
-    if ex.category in ["噪音", "可疑人士", "暴力事件", "火災", "交通事故", "天然災害"]:
+    if ex.category in ["噪音", "可疑人士", "暴力事件", "火災", "交通事故", "天然災害", "受困救援", "自殺危機", "失蹤走失"]:
         # Always use the structured flow question so the LLM can't jump ahead
         # to end-of-flow questions while critical slots are still pending
         return next_question(ex, risk_level) or default_question

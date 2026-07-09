@@ -130,7 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _locationText = locationText;
         _statusText = '緊急通報已送出';
         _resultText =
-            '緊急通報已送至 E-CARE 管理端。若有立即危險，請同步撥打 119 或 110；醫療、火災、天然災害、受困、山域或水域救援優先 119，人身威脅、犯罪或暴力事件優先 110。';
+            '緊急通報已送至 E-CARE 管理端。若有立即危險，請同步撥打 119 或 110；醫療、火災、天然災害、受困救援、山域或水域救援優先 119，自殺危機、失蹤走失、人身威脅、犯罪或暴力事件優先 110 或同步通報。';
         _holdProgress = 0;
       });
     } catch (error) {
@@ -611,7 +611,7 @@ class _DispatchHint extends StatelessWidget {
           child: _DispatchChip(
             icon: Icons.local_fire_department_outlined,
             title: '119',
-            text: '醫療、火災、天然災害、受困、山域/水域救援',
+            text: '醫療、火災、天然災害、受困救援、山域/水域救援',
             color: Color(0xFFC95A4A),
           ),
         ),

@@ -1351,7 +1351,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ],
                       const SizedBox(height: 10),
                       const Text(
-                        '系統會依事件判斷 119/110：消防、醫療、天然災害、受困與山域水域救援偏 119；人身威脅或犯罪偏 110；混合情境請同步通報。',
+                        '系統會依事件判斷 119/110：消防、醫療、天然災害、受困救援與山域水域救援偏 119；自殺危機、失蹤走失、人身威脅或犯罪偏 110 或同步通報。',
                         style: TextStyle(color: EcareApp.muted, fontSize: 12),
                       ),
                       const SizedBox(height: 14),
