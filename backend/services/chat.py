@@ -793,6 +793,8 @@ def _trapped_rescue_next_reply(state: Extracted) -> Optional[str]:
     if state.people_injured is None:
         return "電梯裡有幾個人？有沒有人受傷、不舒服、呼吸困難，或有老人小孩孕婦？"
     if state.danger_active or state.people_injured:
+        if state.location:
+            return "位置已收到，請撥打 119 或請管理員同步通知消防；如果安全可確認，再補充樓層、電梯編號與受困人數。"
         return "請撥打 119 或請管理員同步通知消防，告知地址、樓層、電梯編號與是否有人不適。"
     return "了解，若已經脫困仍請確認人員狀況；若電梯異常未排除，請通知管理員或消防協助。"
 

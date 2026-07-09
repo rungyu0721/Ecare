@@ -111,3 +111,48 @@ def test_process_chat_request_pending_confirmation_keeps_location_question():
     assert response.extracted.dispatch_advice == "建議派遣：待確認"
     assert "我在" in response.reply
     assert response.next_question == "請問事發地點在哪裡？"
+
+
+def test_trapped_rescue_with_client_location_does_not_repeat_address_request():
+    audio_context = {
+        "client_location": {
+            "latitude": 25.0,
+            "longitude": 121.5,
+            "accuracy": 20,
+            "address": "台北市信義區市府路1號",
+            "display_text": "台北市信義區市府路1號",
+        }
+    }
+    messages = [
+        ChatMessage(role="assistant", content="您好，我是 E-CARE 救援助理。"),
+        ChatMessage(
+            role="user",
+            content="我們困在電梯裡，門打不開，有一位老人覺得喘不過氣。",
+        ),
+    ]
+
+    first_response = process_chat_request(messages, audio_context=audio_context)
+
+    assert first_response.extracted.category == "受困救援"
+    assert first_response.extracted.location == "台北市信義區市府路1號"
+    assert first_response.next_question
+    assert "地址" not in first_response.next_question
+    assert "位置已收到" in first_response.next_question
+
+    messages.extend(
+        [
+            ChatMessage(
+                role="assistant",
+                content=f"{first_response.reply}\n\n{first_response.next_question}",
+            ),
+            ChatMessage(role="user", content="仍受困"),
+        ]
+    )
+
+    followup_response = process_chat_request(messages, audio_context=audio_context)
+
+    assert followup_response.extracted.category == "受困救援"
+    assert followup_response.extracted.location == "台北市信義區市府路1號"
+    assert followup_response.next_question
+    assert "地址" not in followup_response.next_question
+    assert "位置已收到" in followup_response.next_question

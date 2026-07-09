@@ -454,6 +454,8 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
             return "人現在還困在電梯或受困空間裡嗎？請不要強行開門或攀爬。"
         if ex.people_injured is None:
             return "受困的人有沒有受傷、不舒服、呼吸困難，或有老人小孩孕婦？"
+        if ex.location:
+            return "位置已收到。請撥打 119 或請管理員同步通知消防；如果安全可確認，再補充樓層、電梯編號與受困人數。"
         return "請提供地址、樓層、電梯編號或明顯地標，方便 119 或管理員定位。"
 
     if ex.category == "自殺危機":
