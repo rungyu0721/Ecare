@@ -3,7 +3,6 @@ PostgreSQL 資料庫操作：連線、初始化、CRUD。
 """
 
 import time
-import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -144,8 +143,35 @@ def now_str():
     return time.strftime("%Y/%m/%d %H:%M", time.localtime())
 
 
-def make_id(prefix="A"):
-    return f"{prefix}{uuid.uuid4().hex[:12].upper()}"
+def make_id(prefix="A", cur=None):
+    today = time.strftime("%Y%m%d", time.localtime())
+    base = f"{prefix}{today}"
+
+    if cur is None:
+        return f"{base}0001"
+
+    cur.execute(
+        """
+        SELECT id
+        FROM case_records
+        WHERE id LIKE %s
+        ORDER BY id DESC
+        LIMIT 1;
+        """,
+        (f"{base}%",),
+    )
+    row = cur.fetchone()
+    latest_id = None
+    if row:
+        latest_id = row.get("id") if isinstance(row, dict) else row[0]
+
+    next_number = 1
+    if latest_id and len(latest_id) >= len(base) + 4:
+        suffix = latest_id[len(base):]
+        if suffix.isdigit():
+            next_number = int(suffix) + 1
+
+    return f"{base}{next_number:04d}"
 
 
 def build_user_item(row: Dict[str, Any]) -> UserItem:

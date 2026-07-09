@@ -10,7 +10,7 @@ from backend.models import Extracted
 
 LOCATION_QUESTION_KEYWORDS = ["地點", "地址", "哪裡", "位置", "在哪裡", "人在哪"]
 INJURY_QUESTION_KEYWORDS = ["受傷", "失去意識", "送醫", "醫療協助", "呼吸困難", "昏倒", "意識清楚"]
-CATEGORY_QUESTION_KEYWORDS = ["火災", "可疑人士", "噪音", "醫療急症", "暴力事件", "交通事故", "發生了什麼事"]
+CATEGORY_QUESTION_KEYWORDS = ["火災", "可疑人士", "噪音", "醫療急症", "山域水域救援", "暴力事件", "交通事故", "發生了什麼事"]
 WEAPON_QUESTION_KEYWORDS = ["武器", "持刀", "棍棒", "槍"]
 DANGER_QUESTION_KEYWORDS = ["還在持續", "還在現場", "是否安全", "危險還在", "還在擴大"]
 
@@ -23,6 +23,10 @@ CATEGORY_NORMALIZATION_MAP = {
     "可疑人士": "可疑人士",
     "噪音": "噪音",
     "醫療急症": "醫療急症",
+    "山域水域救援": "山域水域救援",
+    "山域救援": "山域水域救援",
+    "水域救援": "山域水域救援",
+    "偏鄉救援": "山域水域救援",
     "暴力事件": "暴力事件",
     "交通事故": "交通事故",
     "待確認": "待確認",
@@ -78,6 +82,8 @@ def get_dispatch_advice(
         return "建議派遣：消防車 + 救護車" if people_injured else "建議派遣：消防車"
     if category == "醫療急症":
         return "建議派遣：救護車"
+    if category == "山域水域救援":
+        return "建議派遣：消防救援，必要時同步救護車"
     if category == "暴力事件":
         if weapon or people_injured:
             return "建議派遣：警察，必要時通知救護車待命"
@@ -100,12 +106,14 @@ def get_dispatch_advice(
 def should_ask_scene_danger(ex: Extracted, risk_level: str) -> bool:
     if ex.danger_active is not None or risk_level not in ["Medium", "High"]:
         return False
-    return ex.category in ["火災", "暴力事件", "交通事故", "可疑人士"]
+    return ex.category in ["火災", "暴力事件", "交通事故", "可疑人士", "山域水域救援"]
 
 
 def build_incident_acknowledgement(ex: Extracted) -> str:
     if ex.category == "醫療急症":
         return "收到，現場有人身體不舒服，我先幫你整理。"
+    if ex.category == "山域水域救援":
+        return "收到，這比較像山域或水域救援情境，我先幫你整理位置與救援重點。"
     if ex.category == "火災":
         return "收到，現場疑似有火災，我先幫你確認重點。"
     if ex.category == "暴力事件":

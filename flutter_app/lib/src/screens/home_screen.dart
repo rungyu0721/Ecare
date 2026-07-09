@@ -29,9 +29,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String _welcomeText = '';
   String _locationText = '尚未取得位置';
   String _statusText = '待命中';
-  String _resultText = '快速通報會先整理位置與個人資料；若有立即危險，請依狀況直接撥打 119 或 110。';
+  String _resultText = '長按 3 秒會將目前位置與個人資料送至 E-CARE 管理端；若有立即危險，請同步撥打 119 或 110。';
   bool _loading = true;
   bool _isHolding = false;
+  bool _isSubmittingEmergency = false;
   double _holdProgress = 0;
   Future<void>? _locationFetchTask;
   LocationSnapshot? _currentLocation;
@@ -78,17 +79,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startEmergencyFlow() async {
+    if (_isSubmittingEmergency) {
+      return;
+    }
+
     final profile = _profile;
     if (profile == null) {
       setState(() {
         _statusText = '缺少個人資料';
-        _resultText = '請先完成個人資料，再整理救援通報資訊。';
+        _resultText = '請先完成個人資料，再送出緊急通報。';
+        _holdProgress = 0;
       });
       return;
     }
 
     setState(() {
-      _statusText = '正在整理救援資訊...';
+      _isSubmittingEmergency = true;
+      _statusText = '正在送出緊急通報...';
     });
 
     try {
@@ -97,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final locationText = _locationDisplayText(location);
 
       await _apiService.createReport(
-        title: 'E-CARE 快速通報',
+        title: 'E-CARE 緊急通報',
         category: '救援通報',
         location: locationText,
         latitude: location.latitude,
@@ -105,12 +112,11 @@ class _HomeScreenState extends State<HomeScreen> {
         riskLevel: 'High',
         riskScore: 1.0,
         description: '''
-使用者長按 3 秒整理快速通報資訊。
+使用者長按 3 秒送出緊急通報。
 姓名：${profile.name}
 電話：${profile.phone}
 緊急聯絡人：${profile.emergencyName}
 地址/備註：${profile.address}
-位置：$locationText
 請依狀況判斷 119、110 或同步通報。
 ''',
       );
@@ -122,21 +128,29 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _currentLocation = location;
         _locationText = locationText;
-        _statusText = '已整理快速通報資訊';
+        _statusText = '緊急通報已送出';
         _resultText =
-            '快速通報資訊已整理完成。系統只協助整理位置與個人資料，緊急時仍需由使用者撥打 119 或 110。醫療、火災、受困、山域或水域救援優先 119；人身威脅、犯罪或暴力事件優先 110。';
+            '緊急通報已送至 E-CARE 管理端。若有立即危險，請同步撥打 119 或 110；醫療、火災、受困、山域或水域救援優先 119，人身威脅、犯罪或暴力事件優先 110。';
+        _holdProgress = 0;
       });
     } catch (error) {
       if (!mounted) {
         return;
       }
       setState(() {
-        _statusText = '快速通報資訊整理失敗';
+        _statusText = '緊急通報送出失敗';
         _resultText = ApiService.describeError(
           error,
           action: '建立通報',
         );
+        _holdProgress = 0;
       });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingEmergency = false;
+        });
+      }
     }
   }
 
@@ -205,7 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleEmergencyPress() async {
-    if (_isHolding) {
+    if (_isHolding || _isSubmittingEmergency) {
       return;
     }
 
@@ -257,9 +271,9 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('啟動快速通報？'),
+          title: const Text('送出緊急通報？'),
           content: const Text(
-            '系統會整理目前位置與個人資料，方便您撥打 119 或 110 時快速說明。若已有人受傷、受困或有立即危險，請不要等待，直接撥打 119 或 110。',
+            '系統會將目前位置與個人資料送至 E-CARE 管理端。若已有人受傷、受困或有立即危險，請不要等待，直接撥打 119 或 110。',
           ),
           actions: <Widget>[
             TextButton(
@@ -269,7 +283,7 @@ class _HomeScreenState extends State<HomeScreen> {
             FilledButton.icon(
               onPressed: () => Navigator.of(context).pop(true),
               icon: const Icon(Icons.crisis_alert_rounded),
-              label: const Text('啟動通報'),
+              label: const Text('送出通報'),
             ),
           ],
         );
@@ -281,6 +295,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (mounted) {
       setState(() {
         _statusText = '待命中';
+        _holdProgress = 0;
       });
     }
   }
@@ -309,6 +324,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 16),
                     _EmergencyCard(
                       isHolding: _isHolding,
+                      isSubmitting: _isSubmittingEmergency,
                       holdProgress: _holdProgress,
                       onLongPressStart: _handleEmergencyPress,
                       onLongPressEnd: _cancelEmergencyPress,
@@ -323,7 +339,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         final chatTile = _BigTile(
                           icon: Icons.support_agent_rounded,
                           label: '救援對話',
-                          subtitle: '用聊天整理狀況、位置、傷勢與通報重點',
+                          subtitle: '不知道該怎麼辦時，先從這裡說',
                           onTap: () {
                             Navigator.of(context).push(
                               MaterialPageRoute<void>(
@@ -468,12 +484,14 @@ class _Header extends StatelessWidget {
 class _EmergencyCard extends StatelessWidget {
   const _EmergencyCard({
     required this.isHolding,
+    required this.isSubmitting,
     required this.holdProgress,
     required this.onLongPressStart,
     required this.onLongPressEnd,
   });
 
   final bool isHolding;
+  final bool isSubmitting;
   final double holdProgress;
   final VoidCallback onLongPressStart;
   final VoidCallback onLongPressEnd;
@@ -520,7 +538,7 @@ class _EmergencyCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
-                        '快速通報',
+                        '緊急通報',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 28,
@@ -529,7 +547,7 @@ class _EmergencyCard extends StatelessWidget {
                       ),
                       SizedBox(height: 4),
                       Text(
-                        '長按 3 秒整理位置與個人資料',
+                        '長按 3 秒送出位置與個人資料',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 16,
@@ -562,7 +580,11 @@ class _EmergencyCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  isHolding ? '保持按住，正在確認...' : '長按啟動',
+                  isSubmitting
+                      ? '送出中...'
+                      : isHolding
+                          ? '保持按住，正在確認...'
+                          : '長按啟動',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,

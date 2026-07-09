@@ -334,10 +334,12 @@ multipart/form-data
 ```json
 [
   {
-    "id": "A123",
+    "id": "A202607090001",
     "title": "醫療急症",
     "category": "醫療急症",
     "location": "台北車站",
+    "latitude": 25.047756,
+    "longitude": 121.517030,
     "status": "待處理",
     "created_at": "2026/03/26 14:30",
     "risk_level": "High",
@@ -362,6 +364,8 @@ multipart/form-data
   "title": "醫療急症",
   "category": "醫療急症",
   "location": "台北車站",
+  "latitude": 25.047756,
+  "longitude": 121.517030,
   "risk_level": "High",
   "risk_score": 0.91,
   "description": "案件摘要"
@@ -372,10 +376,12 @@ multipart/form-data
 
 ```json
 {
-  "id": "A123",
+  "id": "A202607090001",
   "title": "醫療急症",
   "category": "醫療急症",
   "location": "台北車站",
+  "latitude": 25.047756,
+  "longitude": 121.517030,
   "status": "待處理",
   "created_at": "2026/03/26 14:30",
   "risk_level": "High",
@@ -383,6 +389,12 @@ multipart/form-data
   "description": "案件摘要"
 }
 ```
+
+管理端顯示建議：
+
+- `location`、`latitude`、`longitude` 屬於位置資訊，建議集中顯示在位置區塊或地圖按鈕旁。
+- `description` 只放通報內容、人員資訊與補充說明；不要再從 `description` 解析位置，避免與上方位置欄重複。
+- `id` 採 `AYYYYMMDDNNNN` 格式，例如 `A202607090001`，前 8 碼日期代表建立日期，最後 4 碼為當日流水號。管理端建議完整顯示或至少保留日期與流水號，不要只截取末 4 碼。
 
 ---
 

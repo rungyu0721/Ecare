@@ -119,6 +119,10 @@ class _RecordsScreenState extends State<RecordsScreen> {
                 itemBuilder: (BuildContext context, int index) {
                   final item = reports[index];
                   final mapUri = _mapsUri(item);
+                  final coordinateText =
+                      item.latitude != null && item.longitude != null
+                          ? '${item.latitude!.toStringAsFixed(6)}, ${item.longitude!.toStringAsFixed(6)}'
+                          : null;
 
                   return Container(
                     decoration: BoxDecoration(
@@ -186,9 +190,19 @@ class _RecordsScreenState extends State<RecordsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
                             Expanded(
-                              child: Text(
-                                '\u4f4d\u7f6e\uff1a${item.location}',
-                                style: const TextStyle(height: 1.6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    '\u4f4d\u7f6e\uff1a${item.location}',
+                                    style: const TextStyle(height: 1.6),
+                                  ),
+                                  if (coordinateText != null)
+                                    Text(
+                                      '座標：$coordinateText',
+                                      style: const TextStyle(height: 1.6),
+                                    ),
+                                ],
                               ),
                             ),
                             if (mapUri != null)

@@ -868,6 +868,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final category = response.extracted.category ?? '';
     final isHighRisk = response.riskLevel == 'High' || response.shouldEscalate;
     final isMedical = category.contains('\u91ab\u7642');
+    final isRemoteRescue =
+        category.contains('山域') || category.contains('水域');
     final isViolenceOrNoise =
         category.contains('\u66b4\u529b') || category.contains('\u566a\u97f3');
     final isFire = category.contains('\u706b\u707d');
@@ -899,6 +901,16 @@ class _ChatScreenState extends State<ChatScreen> {
             Icons.report_problem_outlined, '\u770b\u5230\u6b66\u5668'),
         _QuickReplyAction(
             Icons.phone_in_talk_outlined, '\u5df2\u64a5\u6253 110'),
+      ];
+    }
+
+    if (isRemoteRescue) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.my_location_outlined, '可提供 GPS/地標'),
+        _QuickReplyAction(Icons.medical_services_outlined, '有人受傷'),
+        _QuickReplyAction(Icons.battery_alert_outlined, '手機快沒電'),
+        _QuickReplyAction(Icons.phone_in_talk_outlined, '已撥打 119'),
+        _QuickReplyAction(Icons.help_outline, '不確定'),
       ];
     }
 

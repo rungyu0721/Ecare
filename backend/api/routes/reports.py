@@ -48,23 +48,23 @@ def list_reports():
 @router.post("/reports", response_model=ReportItem)
 def create_report(payload: ReportCreate):
     ensure_db_available()
-    rid = make_id("A")
-    item = ReportItem(
-        id=rid,
-        title=payload.title,
-        category=payload.category,
-        location=payload.location,
-        latitude=payload.latitude,
-        longitude=payload.longitude,
-        status="處理中",
-        created_at=now_str(),
-        risk_level=payload.risk_level,
-        risk_score=payload.risk_score,
-        description=payload.description,
-    )
     try:
         conn = get_db()
         cur = conn.cursor()
+        rid = make_id("A", cur)
+        item = ReportItem(
+            id=rid,
+            title=payload.title,
+            category=payload.category,
+            location=payload.location,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            status="處理中",
+            created_at=now_str(),
+            risk_level=payload.risk_level,
+            risk_score=payload.risk_score,
+            description=payload.description,
+        )
         cur.execute(
             """
             INSERT INTO case_records
