@@ -870,6 +870,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final isMedical = category.contains('\u91ab\u7642');
     final isRemoteRescue =
         category.contains('山域') || category.contains('水域');
+    final isNaturalDisaster = category.contains('天然災害');
+    final isTrappedRescue = category.contains('受困救援');
+    final isSelfHarm = category.contains('自殺危機');
+    final isMissingPerson = category.contains('失蹤走失');
     final isViolenceOrNoise =
         category.contains('\u66b4\u529b') || category.contains('\u566a\u97f3');
     final isFire = category.contains('\u706b\u707d');
@@ -910,6 +914,46 @@ class _ChatScreenState extends State<ChatScreen> {
         _QuickReplyAction(Icons.medical_services_outlined, '有人受傷'),
         _QuickReplyAction(Icons.battery_alert_outlined, '手機快沒電'),
         _QuickReplyAction(Icons.phone_in_talk_outlined, '已撥打 119'),
+        _QuickReplyAction(Icons.help_outline, '不確定'),
+      ];
+    }
+
+    if (isNaturalDisaster) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.shield_outlined, '已到安全處'),
+        _QuickReplyAction(Icons.warning_amber_rounded, '危險仍持續'),
+        _QuickReplyAction(Icons.medical_services_outlined, '有人受困受傷'),
+        _QuickReplyAction(Icons.phone_in_talk_outlined, '已撥打 119'),
+        _QuickReplyAction(Icons.help_outline, '不確定'),
+      ];
+    }
+
+    if (isTrappedRescue) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.location_on_outlined, '可提供樓層位置'),
+        _QuickReplyAction(Icons.warning_amber_rounded, '仍受困'),
+        _QuickReplyAction(Icons.medical_services_outlined, '有人不舒服'),
+        _QuickReplyAction(Icons.phone_in_talk_outlined, '已撥打 119'),
+        _QuickReplyAction(Icons.help_outline, '不確定'),
+      ];
+    }
+
+    if (isSelfHarm) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.shield_outlined, '已保持安全距離'),
+        _QuickReplyAction(Icons.warning_amber_rounded, '仍在危險位置'),
+        _QuickReplyAction(Icons.medical_services_outlined, '已受傷或吞藥'),
+        _QuickReplyAction(Icons.phone_in_talk_outlined, '已撥打 110/119'),
+        _QuickReplyAction(Icons.help_outline, '不確定'),
+      ];
+    }
+
+    if (isMissingPerson) {
+      return const <_QuickReplyAction>[
+        _QuickReplyAction(Icons.location_on_outlined, '可提供最後位置'),
+        _QuickReplyAction(Icons.person_search_outlined, '仍找不到人'),
+        _QuickReplyAction(Icons.phone_in_talk_outlined, '已撥打 110'),
+        _QuickReplyAction(Icons.medical_services_outlined, '可能受困受傷'),
         _QuickReplyAction(Icons.help_outline, '不確定'),
       ];
     }
