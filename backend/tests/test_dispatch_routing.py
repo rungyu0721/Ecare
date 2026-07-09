@@ -4,6 +4,8 @@ import pytest
 
 from backend.services.extraction.classify import get_dispatch_advice
 from backend.services.extraction.entities import simple_extract
+from backend.models import Extracted
+from backend.services.dialogue import next_question
 
 
 @pytest.mark.parametrize(
@@ -40,3 +42,32 @@ def test_simple_extract_routes_real_world_emergency_text(text, expected_category
     assert extracted.dispatch_advice
     for term in expected_terms:
         assert term in extracted.dispatch_advice
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "我不知道怎麼辦",
+        "好像有點不對勁",
+        "我有點害怕",
+        "可以幫我嗎",
+        "有人怪怪的",
+    ],
+)
+def test_ambiguous_intake_stays_pending_confirmation(text):
+    extracted = simple_extract(text)
+
+    assert extracted.category == "待確認"
+    assert extracted.dispatch_advice == "建議派遣：待確認"
+
+
+def test_pending_confirmation_asks_location_first():
+    extracted = Extracted(category="待確認")
+
+    assert next_question(extracted, "Low") == "請問事發地點在哪裡？"
+
+
+def test_pending_confirmation_asks_incident_after_location():
+    extracted = Extracted(category="待確認", location="台北車站")
+
+    assert "請直接告訴我現在發生什麼事" in next_question(extracted, "Low")
