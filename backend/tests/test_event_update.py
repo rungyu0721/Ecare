@@ -1,7 +1,15 @@
 """Event update extraction tests."""
 
 from backend.models import Extracted
-from backend.services.event_update import apply_event_update
+from backend.services.event_update import apply_event_update, load_event_update_rules
+
+
+def test_event_update_rules_load_from_data_file():
+    rules = load_event_update_rules()
+
+    assert "受困救援" in rules
+    assert "仍受困" in rules["受困救援"]["trapped"]
+    assert "濃煙" in rules["火災"]["active_fire"]
 
 
 def test_event_update_returns_structured_trapped_result():

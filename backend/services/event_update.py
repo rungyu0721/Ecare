@@ -4,7 +4,10 @@ This module turns explicit follow-up updates into structured state changes on
 `Extracted`, plus an acknowledgement/next question pair for the dialogue layer.
 """
 
+import json
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, Optional
 
 from backend.models import Extracted
@@ -23,6 +26,17 @@ class EventUpdateResult:
         return self.reply, self.next_question
 
 
+@lru_cache(maxsize=1)
+def load_event_update_rules() -> Dict[str, Dict[str, list[str]]]:
+    path = Path(__file__).parent.parent / "data" / "event_update_rules.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _terms(category: str, group: str) -> list[str]:
+    rules = load_event_update_rules()
+    return rules.get(category, {}).get(group, [])
+
+
 def apply_event_update(
     ex: Extracted,
     latest_user_text: str,
@@ -34,8 +48,8 @@ def apply_event_update(
     if not category or category == "待確認" or not text:
         return None
 
-    def has(terms: list[str]) -> bool:
-        return any(term in text for term in terms)
+    def has(group: str) -> bool:
+        return any(term in text for term in _terms(category, group))
 
     def set_dispatch() -> None:
         existing = ex.dispatch_advice or ""
@@ -53,15 +67,9 @@ def apply_event_update(
         )
 
     if category == "受困救援":
-        trapped = has([
-            "仍受困", "還受困", "還困著", "還在電梯", "困在電梯",
-            "卡在電梯", "出不來", "門打不開",
-        ])
-        discomfort = has([
-            "不舒服", "喘不過氣", "呼吸困難", "很喘", "昏倒",
-            "頭暈", "老人", "小孩", "孕婦", "受傷",
-        ])
-        released = has(["已經出來", "出來了", "電梯開了", "已脫困", "現在安全"])
+        trapped = has("trapped")
+        discomfort = has("discomfort")
+        released = has("released")
         if trapped or discomfort or released:
             if released:
                 ex.danger_active = False
@@ -98,9 +106,9 @@ def apply_event_update(
             )
 
     if category == "火災":
-        active_fire = has(["還在燒", "火很大", "火勢", "濃煙", "冒煙", "煙很大", "越燒越大"])
-        fire_out = has(["火滅了", "已經滅了", "沒有火", "沒看到火", "沒有濃煙"])
-        trapped_or_injured = has(["受困", "困在裡面", "出不來", "受傷", "嗆傷", "吸入濃煙", "不舒服"])
+        active_fire = has("active_fire")
+        fire_out = has("fire_out")
+        trapped_or_injured = has("trapped_or_injured")
         if active_fire or fire_out or trapped_or_injured:
             if active_fire:
                 ex.danger_active = True
@@ -125,11 +133,11 @@ def apply_event_update(
             )
 
     if category in ["暴力事件", "可疑人士", "噪音"]:
-        weapon = has(["拿刀", "持刀", "有刀", "有槍", "有武器", "棍棒", "球棒"])
-        no_weapon = has(["沒有武器", "沒武器", "沒有刀", "沒看到刀", "徒手"])
-        active = has(["還在", "還在現場", "持續", "跟著", "尾隨", "靠近", "威脅", "還在吵", "還在打"])
-        gone = has(["走了", "離開了", "跑了", "不在了", "已經散了", "停了", "結束了"])
-        injured = has(["受傷", "流血", "倒地", "被打", "需要救護車"])
+        weapon = has("weapon")
+        no_weapon = has("no_weapon")
+        active = has("active")
+        gone = has("gone")
+        injured = has("injured")
         if weapon or no_weapon or active or gone or injured:
             if weapon:
                 ex.weapon = True
@@ -163,9 +171,9 @@ def apply_event_update(
             )
 
     if category == "交通事故":
-        injured = has(["受傷", "流血", "倒地", "昏倒", "卡住", "受困", "沒反應", "需要救護車"])
-        blocking = has(["還在車道", "路中間", "擋住車道", "漏油", "冒煙", "車流", "危險位置"])
-        safer = has(["移到旁邊", "移到路邊", "已經安全", "沒有擋路", "不在車道"])
+        injured = has("injured")
+        blocking = has("blocking")
+        safer = has("safer")
         if injured or blocking or safer:
             if injured:
                 ex.people_injured = True
@@ -190,9 +198,9 @@ def apply_event_update(
             )
 
     if category == "天然災害":
-        danger = has(["餘震", "還在搖", "淹水", "水位上升", "土石流", "坍方", "倒塌", "瓦斯味", "道路中斷"])
-        trapped_or_injured = has(["受困", "被壓住", "被埋", "受傷", "流血", "出不來", "需要救護車"])
-        safe = has(["已經離開", "到安全地方", "現在安全", "沒有受困", "沒人受傷"])
+        danger = has("danger")
+        trapped_or_injured = has("trapped_or_injured")
+        safe = has("safe")
         if danger or trapped_or_injured or safe:
             if danger:
                 ex.danger_active = True
@@ -217,9 +225,9 @@ def apply_event_update(
             )
 
     if category == "失蹤走失":
-        still_missing = has(["還找不到", "還沒找到", "聯絡不上", "手機關機", "還失聯", "不見了"])
-        found = has(["找到了", "回來了", "聯絡上了", "警察找到了"])
-        high_risk = has(["小孩", "幼兒", "老人", "長輩", "失智", "需要服藥", "身心障礙"])
+        still_missing = has("still_missing")
+        found = has("found")
+        high_risk = has("high_risk")
         if still_missing or found or high_risk:
             if still_missing:
                 ex.danger_active = True
@@ -244,9 +252,9 @@ def apply_event_update(
             )
 
     if category == "自殺危機":
-        active = has(["還在頂樓", "陽台邊", "拿刀", "持刀", "吞藥", "割腕", "燒炭", "上吊", "一個人"])
-        injured = has(["受傷", "流血", "昏倒", "沒反應", "沒有反應", "吞藥", "割腕"])
-        safer = has(["有人陪", "離開頂樓", "離開危險位置", "警察到了", "救護車到了", "現在安全"])
+        active = has("active")
+        injured = has("injured")
+        safer = has("safer")
         if active or injured or safer:
             if active:
                 ex.danger_active = True
