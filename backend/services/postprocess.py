@@ -509,6 +509,38 @@ def contextualize_reply_and_question(
     if slot_result:
         return slot_result
 
+    if ex.category == "受困救援":
+        trapped_update_terms = [
+            "仍受困", "還受困", "還困著", "還在電梯", "困在電梯",
+            "卡在電梯", "出不來", "門打不開",
+        ]
+        discomfort_terms = [
+            "不舒服", "喘不過氣", "呼吸困難", "很喘", "昏倒",
+            "頭暈", "老人", "小孩", "孕婦", "受傷",
+        ]
+        trapped_confirmed = any(term in latest_user_text for term in trapped_update_terms)
+        discomfort_confirmed = any(term in latest_user_text for term in discomfort_terms)
+
+        if trapped_confirmed or discomfort_confirmed:
+            if trapped_confirmed:
+                ex.danger_active = True
+            if discomfort_confirmed:
+                ex.people_injured = True
+            ex.dispatch_advice = get_dispatch_advice(ex.category, ex.weapon, ex.people_injured)
+
+            if trapped_confirmed and discomfort_confirmed:
+                reply = "收到，現在仍受困，而且有人不舒服，這需要優先讓消防或管理員定位處理。"
+            elif discomfort_confirmed:
+                reply = "收到，電梯內有人不舒服，我會把這視為需要優先協助的狀況。"
+            else:
+                reply = "收到，現在仍受困。請不要強行開門或攀爬，保持通話等待協助。"
+
+            if ex.location:
+                next_q = "請同步撥打 119 或通知管理員，並補充樓層、電梯編號、受困人數，以及不舒服的人目前症狀。"
+            else:
+                next_q = "請先提供地址、樓層、電梯編號或明顯地標，方便 119 或管理員定位。"
+            return reply, next_q
+
     if (
         ex.location
         and latest_user_text

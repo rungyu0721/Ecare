@@ -137,7 +137,8 @@ def test_trapped_rescue_with_client_location_does_not_repeat_address_request():
     assert first_response.extracted.location == "台北市信義區市府路1號"
     assert first_response.next_question
     assert "地址" not in first_response.next_question
-    assert "位置已收到" in first_response.next_question
+    assert "樓層" in first_response.next_question
+    assert "電梯編號" in first_response.next_question
 
     messages.extend(
         [
@@ -155,4 +156,41 @@ def test_trapped_rescue_with_client_location_does_not_repeat_address_request():
     assert followup_response.extracted.location == "台北市信義區市府路1號"
     assert followup_response.next_question
     assert "地址" not in followup_response.next_question
-    assert "位置已收到" in followup_response.next_question
+    assert "樓層" in followup_response.next_question
+    assert "電梯編號" in followup_response.next_question
+
+
+def test_trapped_rescue_followup_acknowledges_still_trapped_and_discomfort():
+    audio_context = {
+        "client_location": {
+            "latitude": 25.0,
+            "longitude": 121.5,
+            "accuracy": 20,
+            "address": "台北市信義區市府路1號",
+            "display_text": "台北市信義區市府路1號",
+        }
+    }
+    messages = [
+        ChatMessage(role="user", content="我們困在電梯裡，門打不開。"),
+    ]
+
+    first_response = process_chat_request(messages, audio_context=audio_context)
+    messages.extend(
+        [
+            ChatMessage(
+                role="assistant",
+                content=f"{first_response.reply}\n\n{first_response.next_question}",
+            ),
+            ChatMessage(role="user", content="仍受困，有人不舒服"),
+        ]
+    )
+
+    followup_response = process_chat_request(messages, audio_context=audio_context)
+
+    assert followup_response.extracted.category == "受困救援"
+    assert followup_response.extracted.danger_active is True
+    assert followup_response.extracted.people_injured is True
+    assert "仍受困" in followup_response.reply
+    assert "有人不舒服" in followup_response.reply
+    assert "樓層" in followup_response.next_question
+    assert "電梯編號" in followup_response.next_question
