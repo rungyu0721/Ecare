@@ -148,15 +148,23 @@ def call_gemini(contents: str):
     raise last_error if last_error else RuntimeError("Gemini generate_content failed")
 
 
-def call_local_llm(contents: str, *, max_tokens: Optional[int] = None):
+def call_local_llm(contents: str, *, max_tokens: Optional[int] = None, system: Optional[str] = None):
     provider_label = local_llm_provider_label()
     if not LOCAL_LLM_BASE_URL or not LLM_MODEL_NAME:
         raise RuntimeError(f"{provider_label} provider not configured")
 
     endpoint = build_local_llm_endpoint(LOCAL_LLM_BASE_URL)
+    messages = []
+    if system:
+        # Ollama applies the Modelfile's baked-in SYSTEM prompt by default when no
+        # system message is sent. An explicit system message here overrides that,
+        # which matters for ecare-v4: its Modelfile SYSTEM prompt asks for JSON
+        # output, but the natural-chat prompt asks for plain conversational text.
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": contents})
     payload = {
         "model": LLM_MODEL_NAME,
-        "messages": [{"role": "user", "content": contents}],
+        "messages": messages,
         "temperature": 0.1,
         "max_tokens": max_tokens or LOCAL_LLM_MAX_TOKENS,
         "stream": False,
@@ -201,15 +209,15 @@ def call_local_llm(contents: str, *, max_tokens: Optional[int] = None):
     return LLMTextResponse(text=text)
 
 
-def call_gemma(contents: str, *, max_tokens: Optional[int] = None):
-    return call_local_llm(contents, max_tokens=max_tokens)
+def call_gemma(contents: str, *, max_tokens: Optional[int] = None, system: Optional[str] = None):
+    return call_local_llm(contents, max_tokens=max_tokens, system=system)
 
 
-def call_llm(contents: str, *, max_tokens: Optional[int] = None):
+def call_llm(contents: str, *, max_tokens: Optional[int] = None, system: Optional[str] = None):
     if LLM_PROVIDER == "gemini":
         return call_gemini(contents)
     if LLM_PROVIDER in {"gemma", "ollama"}:
-        return call_local_llm(contents, max_tokens=max_tokens)
+        return call_local_llm(contents, max_tokens=max_tokens, system=system)
     raise RuntimeError(f"Unsupported LLM provider: {LLM_PROVIDER}")
 
 

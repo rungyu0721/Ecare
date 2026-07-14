@@ -425,7 +425,9 @@ class _ChatScreenState extends State<ChatScreen> {
       final replyTopics = _questionTopics(question);
       final nextTopics = _questionTopics(nextQuestion);
       final overlap = replyTopics.intersection(nextTopics);
-      if (overlap.length >= 2 || overlap.contains('detail')) {
+      if (overlap.length >= 2 ||
+          overlap.contains('detail') ||
+          overlap.contains('remote')) {
         return true;
       }
       if (overlap.contains('disturbance') &&
@@ -455,6 +457,12 @@ class _ChatScreenState extends State<ChatScreen> {
       'fire': <String>['火', '火勢', '濃煙', '冒煙', '燃燒'],
       'traffic': <String>['車禍', '車道', '車流', '撞', '事故'],
       'detail': <String>['狀況', '發生什麼', '補充', '描述', '看到', '聽到'],
+      'remote': <String>[
+        'GPS', '座標', '步道', '地標', '登山口', '山屋', '國家公園',
+        '同行', '人數', '電量', '沒電', '訊號', '定位',
+        '失溫', '中暑', '高山症', '溪水', '水位', '沖走', '渡溪',
+        '下雨', '起霧', '天黑', '氣溫', '低溫',
+      ],
     };
 
     return topicGroups.entries

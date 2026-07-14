@@ -38,6 +38,14 @@ _inject(
     WHISPER_EMERGENCY_INITIAL_PROMPT="",
 )
 
+def _extract_json_object_text(text: str) -> str:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start: end + 1]
+    return text
+
+
 # llm service — 需要網路 / Ollama
 _inject(
     "backend.services.llm",
@@ -47,4 +55,5 @@ _inject(
     warmup_llm=MagicMock(),
     parse_llm_json_text=MagicMock(return_value={}),
     local_llm_provider_label=MagicMock(return_value="mock"),
+    extract_json_object_text=_extract_json_object_text,
 )

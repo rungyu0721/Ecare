@@ -44,6 +44,7 @@ from backend.services.extraction import (
 )
 from backend.services.llm import (
     call_llm,
+    extract_json_object_text,
     llm_is_ready,
     parse_llm_json_text,
 )
@@ -90,6 +91,12 @@ def _uses_natural_chat_model() -> bool:
     )
 
 
+_NATURAL_CHAT_SYSTEM_PROMPT = (
+    "你是 E-CARE 智慧緊急事件助手。請用繁體中文直接輸出一段自然對話回覆，"
+    "不要輸出 JSON、Markdown 或其他格式標記，也不要在回覆前加任何角色標籤。"
+)
+
+
 def _build_natural_chat_prompt(
     *,
     recent: List[ChatMessage],
@@ -108,8 +115,9 @@ def _build_natural_chat_prompt(
 - 同理心要具體承接事件，例如找不到人、受困、看到火煙、有人不舒服；不要只泛泛說「我了解」。
 - 語氣要穩定、短、可執行，不要責備、催促或像表單。
 - 不要重複問已經回答過的問題。
+- 若「已知事件資訊」的 location 欄位已有值，代表系統已經取得使用者的 GPS 定位或地址，請直接引用該位置回覆或請使用者確認即可，不要再詢問座標或地點。
 - 醫療急症：優先確認是否有反應、呼吸是否正常；無反應或呼吸異常時提醒立刻撥打 119。
-- 偏鄉/山區/國家公園/步道/溪谷救援：優先提醒 119，並確認 GPS 座標或步道地標、同行人數、傷勢/可否移動、手機電量與訊號。
+- 偏鄉/山區/國家公園/步道/溪谷救援：優先提醒 119；若 location 尚未知，確認 GPS 座標或步道地標，否則直接引用已知位置；並確認同行人數、傷勢/可否移動、手機電量與訊號。
 - 天然災害：先提醒遠離倒塌、淹水、土石流等危險區域，再確認是否有人受困或受傷；有人受困/受傷優先 119。
 - 受困救援/自殺危機/失蹤走失：優先確認位置與立即危險；電梯受困偏 119，自殺危機同步 119/110，失蹤走失偏 110。
 - 暴力/火災/交通事故：先提醒使用者保持安全距離，再問下一個最關鍵問題。
@@ -691,7 +699,11 @@ def _remote_rescue_next_reply(state: Extracted) -> Optional[str]:
     if normalize_category_name(state.category) != "山域水域救援" and not is_remote_rescue_extracted(state.symptom_summary):
         return None
     if state.conscious is False or state.breathing_difficulty is True:
+        if state.location:
+            return f"這是高風險山域救援狀況，已收到你的位置：{state.location}。請立刻撥打 119，開擴音依照指示處理，並提供這個位置、同行人數和傷者狀況。"
         return "這是高風險山域救援狀況，請立刻撥打 119，開擴音依照指示處理，並準備回報 GPS 座標、步道地標、同行人數和傷者狀況。"
+    if state.location:
+        return f"這比較像山域或偏鄉救援情境，已收到你的位置：{state.location}。請優先撥打 119 並提供這個位置，同時準備步道地標、同行人數、傷勢和手機電量。"
     return "這比較像山域或偏鄉救援情境，請優先撥打 119，並準備 GPS 座標、步道地標、同行人數、傷勢和手機電量。"
 
 
@@ -735,9 +747,7 @@ def _medical_next_reply(state: Extracted) -> Optional[str]:
     if normalize_category_name(state.category) != "醫療急症":
         return None
     if is_remote_rescue_extracted(state.symptom_summary):
-        if state.conscious is False or state.breathing_difficulty is True:
-            return "這是高風險山域救援狀況，請立刻撥打 119，開擴音依照指示處理，並準備回報 GPS 座標、步道地標、同行人數和傷者狀況。"
-        return "這比較像山域或偏鄉救援情境，請優先撥打 119，並準備 GPS 座標、步道地標、同行人數、傷勢和手機電量。"
+        return _remote_rescue_next_reply(state)
     if state.conscious is None:
         return "請先確認他是否有反應、叫得醒嗎？如果叫不醒，請立刻請旁邊的人協助撥打 119。"
     if state.breathing_difficulty is None:
@@ -757,6 +767,8 @@ def _fire_next_reply(state: Extracted) -> Optional[str]:
     if state.people_injured is None:
         return "現場有沒有人受困、受傷，或吸入濃煙感到不舒服？"
     if state.danger_active or state.people_injured:
+        if state.location:
+            return f"請立刻撥打 119，已收到你的位置：{state.location}，移到安全位置等待消防人員並提供這個位置，同時告知是否有人受困。"
         return "請立刻撥打 119，移到安全位置等待消防人員，並告知起火位置、是否有人受困。"
     return "了解，目前看起來沒有明顯火勢或人員受傷。請仍保持警覺，通知管理員或消防單位確認來源。"
 
@@ -781,6 +793,8 @@ def _natural_disaster_next_reply(state: Extracted) -> Optional[str]:
     if state.people_injured is None:
         return "現場有沒有人受困、被壓住、受傷，或需要救護車？"
     if state.danger_active or state.people_injured:
+        if state.location:
+            return f"請優先撥打 119，已收到你的位置：{state.location}，可直接提供這個位置，並告知災害類型、是否有人受困或受傷；如果也有人身威脅，再同步通報 110。"
         return "請優先撥打 119，告知災害類型、位置、是否有人受困或受傷；如果也有人身威脅，再同步通報 110。"
     return "了解，目前看起來已經離開主要危險。請仍保持警覺，留在安全處並依地方災害應變或消防指示行動。"
 
@@ -806,6 +820,8 @@ def _self_harm_next_reply(state: Extracted) -> Optional[str]:
         return "請先不要刺激或拉扯對方，保持陪伴與安全距離。對方現在還在頂樓、陽台邊、持刀或已經吞藥嗎？"
     if state.people_injured is None:
         return "對方目前有受傷、流血、吞藥、昏倒或沒有反應嗎？"
+    if state.location:
+        return f"這是高風險狀況，已收到你的位置：{state.location}。請立刻同步撥打 119 和 110 並提供這個位置，同時告知現場危險物與對方目前狀態。"
     return "這是高風險狀況，請立刻同步撥打 119 和 110，告知位置、樓層、現場危險物與對方目前狀態。"
 
 
@@ -819,6 +835,30 @@ def _missing_person_next_reply(state: Extracted) -> Optional[str]:
     return "建議盡快通報 110，提供最後出現地點、時間、穿著、照片與聯絡方式；若在山區水域或可能受困受傷，請同步 119。"
 
 
+def _suspicious_next_reply(state: Extracted) -> Optional[str]:
+    if normalize_category_name(state.category) != "可疑人士":
+        return None
+    if state.weapon is None:
+        return "請保持距離，不要主動接觸對方。有看到對方拿刀、棍棒或其他武器嗎？"
+    if state.danger_active is None:
+        return "對方目前還在附近徘徊或靠近你嗎？"
+    if state.danger_active:
+        return "對方還在附近，請盡快移到人多明亮處或室內，並通知警衛、管理員或撥打 110。"
+    return "了解，對方目前已經離開。請仍保持警覺，必要時通知警衛或管理員。"
+
+
+def _noise_next_reply(state: Extracted) -> Optional[str]:
+    if normalize_category_name(state.category) != "噪音":
+        return None
+    if state.danger_active is None:
+        return "這個吵鬧或爭執還在持續嗎？"
+    if state.danger_active and state.people_injured is None:
+        return "現場有沒有人受傷，或聽到求救、摔東西的聲音？"
+    if state.danger_active:
+        return "如果情況持續升高或有人受傷風險，請通知管理員或撥打 110/119。"
+    return "了解，目前聲音已經緩和。請仍留意，如果再次出現爭執或危險，請隨時通報。"
+
+
 def _category_flow_reply(state: Extracted) -> Optional[str]:
     for builder in [
         _remote_rescue_next_reply,
@@ -830,6 +870,8 @@ def _category_flow_reply(state: Extracted) -> Optional[str]:
         _self_harm_next_reply,
         _missing_person_next_reply,
         _natural_disaster_next_reply,
+        _suspicious_next_reply,
+        _noise_next_reply,
     ]:
         reply = builder(state)
         if reply:
@@ -950,6 +992,53 @@ def _refine_natural_reply_for_context(
         asks_injury_again = state.people_injured is not None and any(token in text for token in ["受傷", "受困", "流血"])
         asks_road_again = state.danger_active is not None and any(token in text for token in ["車道", "路中間", "漏油", "冒煙"])
         if flow_reply and (asks_injury_again or asks_road_again):
+            return flow_reply
+    if category == "天然災害":
+        flow_reply = _natural_disaster_next_reply(state)
+        if flow_reply and (_looks_repetitive(reply) or len(reply) > 220):
+            return flow_reply
+        asks_danger_again = state.danger_active is not None and any(token in text for token in ["倒塌", "淹水", "土石流", "瓦斯"])
+        asks_injury_again = state.people_injured is not None and any(token in text for token in ["受困", "被壓住", "受傷"])
+        if flow_reply and (asks_danger_again or asks_injury_again):
+            return flow_reply
+    if category == "受困救援":
+        flow_reply = _trapped_rescue_next_reply(state)
+        if flow_reply and (_looks_repetitive(reply) or len(reply) > 220):
+            return flow_reply
+        asks_trapped_again = state.danger_active is not None and any(token in text for token in ["電梯", "困在", "出不來"])
+        asks_injury_again = state.people_injured is not None and any(token in text for token in ["受傷", "不舒服", "呼吸困難"])
+        if flow_reply and (asks_trapped_again or asks_injury_again):
+            return flow_reply
+    if category == "自殺危機":
+        flow_reply = _self_harm_next_reply(state)
+        if flow_reply and (_looks_repetitive(reply) or len(reply) > 220):
+            return flow_reply
+        asks_danger_again = state.danger_active is not None and any(token in text for token in ["頂樓", "陽台", "持刀", "吞藥", "還在"])
+        asks_injury_again = state.people_injured is not None and any(token in text for token in ["受傷", "流血", "吞藥", "昏倒", "沒有反應"])
+        if flow_reply and (asks_danger_again or asks_injury_again):
+            return flow_reply
+    if category == "失蹤走失":
+        flow_reply = _missing_person_next_reply(state)
+        if flow_reply and (_looks_repetitive(reply) or len(reply) > 220):
+            return flow_reply
+        asks_danger_again = state.danger_active is not None and any(token in text for token in ["聯絡不上", "找不到", "最後看到"])
+        asks_injury_again = state.people_injured is not None and any(token in text for token in ["受傷", "受困", "小孩", "長輩", "失智"])
+        if flow_reply and (asks_danger_again or asks_injury_again):
+            return flow_reply
+    if category == "可疑人士":
+        flow_reply = _suspicious_next_reply(state)
+        if flow_reply and (_looks_repetitive(reply) or len(reply) > 220):
+            return flow_reply
+        asks_weapon_again = state.weapon is not None and any(token in text for token in ["武器", "持刀", "棍棒"])
+        asks_danger_again = state.danger_active is not None and any(token in text for token in ["徘徊", "靠近", "跟著", "還在附近"])
+        if flow_reply and (asks_weapon_again or asks_danger_again):
+            return flow_reply
+    if category == "噪音":
+        flow_reply = _noise_next_reply(state)
+        if flow_reply and (_looks_repetitive(reply) or len(reply) > 220):
+            return flow_reply
+        asks_danger_again = state.danger_active is not None and any(token in text for token in ["持續", "還在", "爭執"])
+        if flow_reply and asks_danger_again:
             return flow_reply
     return text
 
@@ -1176,6 +1265,7 @@ def llm_chat_with_audio(
         natural_resp = call_llm(
             natural_prompt,
             max_tokens=min(llm_max_tokens or 192, 192),
+            system=_NATURAL_CHAT_SYSTEM_PROMPT,
         )
         natural_reply = _clean_natural_reply(natural_resp.text or "")
         if natural_reply:

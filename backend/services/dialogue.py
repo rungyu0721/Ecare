@@ -408,11 +408,15 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
         symptom_summary = ex.symptom_summary or ""
         if is_remote_rescue_extracted(symptom_summary):
             if risk_level == "High":
+                if ex.location:
+                    return f"已收到你的位置：{ex.location}。請立刻撥打 119 並提供這個位置；在安全處停留，不要下切溪谷或靠近崖邊。你們同行幾個人，有人受傷或不能走嗎？"
                 return "請立刻撥打 119，告知 GPS 座標或步道地標；在安全處停留，不要下切溪谷或靠近崖邊。你們同行幾個人，有人受傷或不能走嗎？"
             if ex.people_injured is None:
                 return "你們同行幾個人？目前有人受傷、失溫、中暑，或無法自行行走嗎？"
             if ex.danger_active is None:
                 return "你們現在是迷路、受困，還是附近有溪水暴漲、落石、坍方或天色變暗的危險？"
+            if ex.location:
+                return f"已收到你的位置：{ex.location}。手機電量和訊號還夠嗎？請保留電力，撥打 119 時可直接提供這個位置。"
             return "手機電量和訊號還夠嗎？請保留電力，並準備提供 GPS 座標、步道名稱或最近地標給 119。"
         if any(token in symptom_summary for token in ["燙傷", "燒傷", "灼傷", "水泡"]):
             return medical_follow_up_question(ex, risk_level)
@@ -463,6 +467,8 @@ def apply_category_scripts(ex: Extracted, risk_level: str) -> str:
             return "對方現在還在頂樓、陽台邊、持刀、已吞藥，或其他危險位置嗎？"
         if ex.people_injured is None:
             return "對方目前有受傷、流血、吞藥、昏倒或沒有反應嗎？"
+        if ex.location:
+            return f"已收到你的位置：{ex.location}。請立刻同步撥打 119 和 110 並提供這個位置，同時告知對方目前狀態。"
         return "請立刻同步撥打 119 和 110，告知位置、樓層與對方目前狀態。"
 
     if ex.category == "失蹤走失":

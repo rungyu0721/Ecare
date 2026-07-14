@@ -194,3 +194,66 @@ def test_trapped_rescue_followup_acknowledges_still_trapped_and_discomfort():
     assert "有人不舒服" in followup_response.reply
     assert "樓層" in followup_response.next_question
     assert "電梯編號" in followup_response.next_question
+
+
+def test_remote_rescue_high_risk_confirms_known_gps_instead_of_asking_again():
+    ex = Extracted(
+        category="醫療急症",
+        symptom_summary="疑似山域水域救援",
+        location="24.500000, 121.300000 (+/- 20m)",
+    )
+    question = next_question(ex, "High")
+
+    assert "24.500000, 121.300000" in question
+    assert "已收到你的位置" in question
+    assert "請問事發地點在哪裡" not in question
+
+
+def test_remote_rescue_high_risk_without_known_location_asks_for_location_first():
+    # With no location at all, the generic top-level "where are you" question
+    # takes priority over the category-specific script — there's nothing to
+    # confirm yet.
+    ex = Extracted(category="醫療急症", symptom_summary="疑似山域水域救援")
+    question = next_question(ex, "High")
+
+    assert question == "請問事發地點在哪裡？"
+
+
+def test_remote_rescue_battery_question_without_known_location_still_asks_for_gps():
+    ex = Extracted(
+        category="醫療急症",
+        symptom_summary="疑似山域水域救援",
+        people_injured=False,
+        danger_active=True,
+    )
+    question = next_question(ex, "Medium")
+
+    assert "GPS 座標" in question
+    assert "已收到你的位置" not in question
+
+
+def test_remote_rescue_battery_question_confirms_known_location():
+    ex = Extracted(
+        category="醫療急症",
+        symptom_summary="疑似山域水域救援",
+        location="南投縣仁愛鄉步道",
+        people_injured=False,
+        danger_active=True,
+    )
+    question = next_question(ex, "Medium")
+
+    assert "已收到你的位置：南投縣仁愛鄉步道" in question
+    assert "手機電量" in question
+
+
+def test_self_harm_confirms_known_location_instead_of_asking_again():
+    ex = Extracted(
+        category="自殺危機",
+        danger_active=True,
+        people_injured=False,
+        location="台中市西區某大樓頂樓",
+    )
+    question = next_question(ex, "High")
+
+    assert "已收到你的位置：台中市西區某大樓頂樓" in question
+    assert "119" in question and "110" in question
