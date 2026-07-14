@@ -2,13 +2,16 @@
 import pytest
 
 from backend.services.postprocess import (
+    asks_about_location,
     contextualize_reply_and_question,
+    first_aid_guidance_for_text,
     has_aed_arrived,
     has_called_119,
     has_no_normal_breathing,
     looks_like_report_style_reply,
     previous_question_intent,
     remove_duplicate_next_question,
+    sanitize_reply_and_question,
 )
 from backend.models import ChatMessage, Extracted
 
@@ -249,3 +252,68 @@ def test_traffic_followup_updates_injury_state():
     assert "事故現場有人受傷或受困" in reply
     assert ex.dispatch_advice
     assert next_q
+
+
+# ======================
+# first_aid_guidance_for_text — 山域急救指引也要附上已知位置
+# ======================
+
+def test_hypothermia_guidance_appends_known_location_in_remote_context():
+    ex = Extracted(category="山域水域救援", location="南投縣仁愛鄉合歡山主峰步道")
+    reply, advice = first_aid_guidance_for_text("有一個人開始發抖，可能失溫了", ex)
+
+    assert "失溫" in reply
+    assert "已收到你的位置：南投縣仁愛鄉合歡山主峰步道" in reply
+    assert advice
+
+
+def test_hypothermia_guidance_without_known_location_has_no_location_note():
+    ex = Extracted(category="山域水域救援")
+    reply, _ = first_aid_guidance_for_text("有一個人開始發抖，可能失溫了", ex)
+
+    assert "失溫" in reply
+    assert "已收到你的位置" not in reply
+
+
+def test_heat_illness_guidance_urban_context_has_no_location_note():
+    # 一般都市中暑（非山域情境）不套用山域專屬的位置確認語
+    ex = Extracted(category="醫療急症", location="台北車站")
+    reply, _ = first_aid_guidance_for_text("有人中暑昏倒，皮膚很燙，沒有流汗", ex)
+
+    assert "中暑" in reply
+    assert "已收到你的位置" not in reply
+
+
+def test_water_rescue_guidance_appends_known_location():
+    ex = Extracted(category="山域水域救援", location="南投縣仁愛鄉合歡山主峰步道")
+    reply, _ = first_aid_guidance_for_text("他被水沖走了，我要下水救他嗎", ex)
+
+    assert "不要自行下水" in reply
+    assert "已收到你的位置：南投縣仁愛鄉合歡山主峰步道" in reply
+
+
+# ======================
+# asks_about_location — 只有問句才算「在問位置」
+# ======================
+
+def test_asks_about_location_true_for_actual_question():
+    assert asks_about_location("請問事發地點在哪裡？") is True
+    assert asks_about_location("你現在人在哪？") is True
+
+
+def test_asks_about_location_false_for_confirmation_statement():
+    # 陳述句提到「位置」不算在問，避免跟 sanitize_reply_and_question 的
+    # 「位置已知卻還在問 -> 換成通用收到句」邏輯誤觸發衝突
+    assert asks_about_location("已收到你的位置：南投縣仁愛鄉合歡山主峰步道，可直接提供給119。") is False
+    assert asks_about_location("位置已收到。") is False
+
+
+def test_sanitize_does_not_overwrite_location_confirmation_reply():
+    ex = Extracted(category="山域水域救援", location="南投縣仁愛鄉合歡山主峰步道", danger_active=True)
+    reply = "收到，這可能是失溫，需要盡快保暖並撥打119。已收到你的位置：南投縣仁愛鄉合歡山主峰步道，可直接提供給119。"
+    next_q = "請讓他離開風雨與濕冷環境，脫除濕衣物並換上乾燥衣物保暖。"
+
+    sanitized_reply, _ = sanitize_reply_and_question(reply, next_q, ex, "High")
+
+    assert "失溫" in sanitized_reply
+    assert "已收到你的位置" in sanitized_reply

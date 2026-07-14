@@ -26,7 +26,7 @@ TEMPLATE """{{- if .Messages }}
 {{- end }}{{ .Response }}{{ if .Response }}<|im_end|>{{ end }}"""
 
 PARAMETER num_gpu 999
-PARAMETER num_ctx 1024
+PARAMETER num_ctx 4096
 PARAMETER temperature 0.1
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "<|im_end|>"

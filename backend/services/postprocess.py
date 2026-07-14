@@ -169,6 +169,12 @@ def has_any_term(text: str, terms: list[str]) -> bool:
     return any(term in text for term in terms)
 
 
+def _remote_location_note(ex: Extracted, remote_rescue: bool) -> str:
+    if remote_rescue and ex.location:
+        return f"已收到你的位置：{ex.location}，可直接提供給119。"
+    return ""
+
+
 def _is_remote_rescue_context(text: str, ex: Extracted) -> bool:
     return (
         ex.category == "山域水域救援"
@@ -221,24 +227,28 @@ def first_aid_guidance_for_text(text: str, ex: Extracted) -> Optional[tuple[str,
         ex.people_injured = True
         if remote_rescue:
             ex.danger_active = True
-        return get_guide("hypothermia")
+        reply, advice = get_guide("hypothermia")
+        return reply + _remote_location_note(ex, remote_rescue), advice
 
     if has_any_term(text, ALTITUDE_SICKNESS_TERMS):
         ex.category = "山域水域救援" if remote_rescue else "醫療急症"
         ex.people_injured = True
         if remote_rescue:
             ex.danger_active = True
-        return get_guide("altitude_sickness")
+        reply, advice = get_guide("altitude_sickness")
+        return reply + _remote_location_note(ex, remote_rescue), advice
 
     if has_any_term(text, WATER_RESCUE_TERMS):
         ex.category = "山域水域救援"
         ex.danger_active = True
-        return get_guide("water_rescue_safety")
+        reply, advice = get_guide("water_rescue_safety")
+        return reply + _remote_location_note(ex, True), advice
 
     if has_any_term(text, HEAT_ILLNESS_TERMS):
         ex.category = "山域水域救援" if remote_rescue else "醫療急症"
         ex.people_injured = True
-        return get_guide("heat_illness")
+        reply, advice = get_guide("heat_illness")
+        return reply + _remote_location_note(ex, remote_rescue), advice
 
     if has_any_term(text, FRACTURE_TERMS):
         ex.category = "醫療急症"

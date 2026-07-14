@@ -1,5 +1,6 @@
 """類別判斷、追問偵測、派遣建議、現場危險判斷。"""
 
+import re
 from typing import Optional
 
 from backend.models import Extracted
@@ -63,8 +64,22 @@ def normalize_category_name(category: Optional[str]) -> Optional[str]:
 # 詢問偵測
 # ======================
 
+def _question_sentences(text: str) -> list[str]:
+    return [
+        sentence
+        for sentence in re.findall(r"[^。！？!?]+[。！？!?]?", text or "")
+        if sentence.rstrip().endswith(("？", "?"))
+    ]
+
+
 def asks_about_location(text: str) -> bool:
-    return any(keyword in text for keyword in LOCATION_QUESTION_KEYWORDS)
+    # 只有「這句本身是問句」才算在問位置，避免把「已收到你的位置：xxx」這種
+    # 陳述句誤判成還在追問，導致已知位置的確認語被覆蓋掉。
+    return any(
+        keyword in sentence
+        for sentence in _question_sentences(text)
+        for keyword in LOCATION_QUESTION_KEYWORDS
+    )
 
 
 def asks_about_injury(text: str) -> bool:
